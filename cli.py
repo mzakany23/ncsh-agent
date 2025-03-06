@@ -112,25 +112,40 @@ def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking
     
     # Import date module for context
     from datetime import datetime
-    
+    import re, calendar
+    from analysis.duckdb_analyzer import DuckDBAnalyzer
+    analyzer = DuckDBAnalyzer(parquet_file)
+    schema_list, schema_json = analyzer.get_schema()
+    enriched_context = f"Schema Info: {schema_json}"
+    time_match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re.IGNORECASE)
+    if time_match:
+        month_str = time_match.group(1)
+        year_str = time_match.group(2)
+        month_num = list(calendar.month_abbr).index(month_str.title())
+        start_date = f"{year_str}-{month_num:02d}-01"
+        last_day = calendar.monthrange(int(year_str), month_num)[1]
+        end_date = f"{year_str}-{month_num:02d}-{last_day:02d}"
+        filter_query = f"SELECT * FROM input_data WHERE match_date >= '{start_date}' AND match_date <= '{end_date}'"
+        filtered_results = analyzer.execute_query(filter_query)
+        enriched_context += f" | Filtered Data for {month_str.title()} {year_str}: {filtered_results.get('result','')}"
+ 
     # Get current date information
     current_date = datetime.now()
-    current_year = current_date.year
-    current_month = current_date.month
-    current_day = current_date.day
-    
-    # Prepare the initial message with date context
-    initial_message = f"""I need to analyze data in a parquet file. 
-    
+ 
+    # Prepare the initial message with enriched context
+    initial_message = f"""I need to analyze data in a parquet file.
+
     TODAY'S DATE: {current_date.strftime('%Y-%m-%d')}
-    
+
     My question is: {question}
-    
+
     The parquet file is located at: {parquet_file}
-    
-    IMPORTANT: When processing time-related terms like 'this month', 'last week', etc., 
-    use the current date specified above as reference. Also, when searching for teams, 
-    be aware that team names might have variations (e.g., 'Team Name' and 'Team Name (1)') 
+
+    CONTEXT: {enriched_context}
+
+    IMPORTANT: When processing time-related terms like 'this month', 'last week', etc.,
+    use the current date specified above as reference. Also, when searching for teams,
+    be aware that team names might have variations (e.g., 'Team Name' and 'Team Name (1)')
     and should be considered the same entity for analysis purposes.
     """
     
