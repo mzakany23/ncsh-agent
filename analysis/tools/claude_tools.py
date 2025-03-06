@@ -20,7 +20,9 @@ from analysis.duckdb_analyzer import (
     execute_sql,
     get_schema,
     validate_sql,
-    query_to_sql
+    query_to_sql,
+    build_dataset,
+    compact_dataset
 )
 
 # Import Anthropic client for summarization
@@ -143,6 +145,46 @@ def get_claude_tools() -> List[Dict]:
                     },
                 },
                 "required": ["reasoning", "query", "parquet_file"],
+            },
+        },
+        {
+            "name": "build_dataset",
+            "description": "Create a filtered dataset for a specific team and save it as a new parquet file",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "team": {
+                        "type": "string",
+                        "description": "The team name to filter the dataset by (will search home_team and away_team)",
+                    },
+                    "parquet_file": {
+                        "type": "string",
+                        "description": "Path to the source parquet file",
+                    },
+                    "output_file": {
+                        "type": "string",
+                        "description": "Path to save the filtered dataset as a parquet file",
+                    },
+                },
+                "required": ["team", "parquet_file", "output_file"],
+            },
+        },
+        {
+            "name": "compact_dataset",
+            "description": "Create a compact representation of match data optimized for Claude's context window",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "parquet_file": {
+                        "type": "string",
+                        "description": "Path to the parquet file containing match data",
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "description": "Format style ('compact', 'table', or 'csv')",
+                    },
+                },
+                "required": ["parquet_file"],
             },
         },
         {
@@ -276,6 +318,19 @@ def tool_summarize_results(tool_input: Dict) -> Dict:
     summarization_type = tool_input.get("summarization_type", "brief")
     return summarize_results(reasoning, data, summarization_type)
 
+def tool_build_dataset(tool_input: Dict) -> Dict:
+    """Adapter for build_dataset function."""
+    team = tool_input.get("team", "")
+    parquet_file = tool_input.get("parquet_file", "")
+    output_file = tool_input.get("output_file", "")
+    return build_dataset(team, parquet_file, output_file)
+
+def tool_compact_dataset(tool_input: Dict) -> Dict:
+    """Adapter for compact_dataset function."""
+    parquet_file = tool_input.get("parquet_file", "")
+    output_format = tool_input.get("output_format", "compact")
+    return compact_dataset(parquet_file, output_format)
+
 # Create a mapping of tool names to their implementation functions
 def get_tool_mapping() -> Dict:
     """
@@ -291,4 +346,6 @@ def get_tool_mapping() -> Dict:
         "query_to_sql": tool_query_to_sql,
         "summarize_results": tool_summarize_results,
         "complete_task": complete_task,
+        "build_dataset": tool_build_dataset,
+        "compact_dataset": tool_compact_dataset,
     }

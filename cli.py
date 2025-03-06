@@ -35,7 +35,7 @@ from analysis.duckdb_analyzer import (
 # Initialize console for rich output
 console = Console()
 
-def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking_budget_tokens: int = 2000):
+def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking_budget_tokens: int = 1024):
     """
     Run the agent to process a natural language question about data in the parquet file.
     
@@ -57,66 +57,55 @@ def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking
         console.print("[yellow]Tip: Use 'make refresh-data' to download data from AWS S3.[/yellow]")
         sys.exit(1)
     
-    client = anthropic.Anthropic(api_key=api_key)
+    # Import required modules
+    from datetime import datetime
+    import re, calendar, time
+    from analysis.duckdb_analyzer import DuckDBAnalyzer
     
-    # Define the system prompt with tools
+    # Define a more concise system prompt with tools
     system_prompt = """
     <purpose>
-        You are an expert data analyst that can query DuckDB databases using SQL.
+        You are an expert data analyst that uses SQL for DuckDB databases. ALWAYS use table name 'input_data'.
     </purpose>
     
     <instructions>
+        <operations>
+            DATA ANALYSIS: SQL queries (e.g., "How did Key West FC perform?") 
+            DATASET CREATION: Create team datasets (e.g., "Create dataset for Key West FC")
+            DATASET COMPACTION: Compact representations (e.g., "Compact the dataset in CSV format")
+        </operations>
+        
         <workflow>
-            For EVERY user question, ALWAYS follow these steps in order:
-            1. First, call the get_schema tool to understand the database structure
-            2. Write appropriate SQL queries to answer the user's question
-            3. Call the validate_sql tool to check your SQL syntax
-            4. ALWAYS call the execute_sql tool to get actual match data
-            5. Format an answer based on the query results
-            6. Call complete_task only when you have a final data-driven answer
+            DATA ANALYSIS: 
+            1. Use get_schema tool
+            2. Write SQL queries with 'input_data' table
+            3. Validate SQL, execute it, format results
+            
+            DATASET CREATION:
+            1. Extract team name and call build_dataset tool
+            
+            DATASET COMPACTION:
+            1. Use compact_dataset tool with requested format
         </workflow>
         
-        <response_requirements>
-            1. ALWAYS execute SQL queries - never just describe what you could do
-            2. Answer with SPECIFIC DATA from the executed SQL results
-            3. Include actual numbers, scores, dates, team names, etc. from the query results
-            4. Format tables or lists to make results easy to read
-            5. For team performance questions, ALWAYS include:
-               - Wins/losses/draws record
-               - Goals scored vs. conceded
-               - Relevant match dates and opponents
-        </response_requirements>
-        
-        <advanced_query_handling>
-            When processing natural language queries, be aware of these special considerations:
-            
-            1. Time references - Handle relative time references ("this month", "last week", etc.) by 
-               translating them to absolute date ranges based on the current date. For example, "this month" 
-               should use the current month and year from the system time.
-               
-            2. Team names and variants - Sports teams may appear with variations in names (e.g., "Key West FC" 
-               and "Key West FC (1)"). When a user asks about a team, consider checking for all possible 
-               variations of that team name in the data.
-               
-            3. Ambiguous entities - If an entity mentioned in the query could refer to multiple distinct 
-               entities in the database, identify all possible matches and consider them in your analysis.
-               
-            4. Natural aggregations - Queries like "how did team X do" should be interpreted as requests 
-               for win/loss records, scores, and other performance metrics. ALWAYS INCLUDE ACTUAL DATA.
-        </advanced_query_handling>
+        <requirements>
+            1. ALWAYS use 'input_data' as table name
+            2. Include actual data and format results well
+            3. For team performance: show wins/losses/draws, goals scored/conceded
+            4. Handle team name variants (e.g., "Team" and "Team (1)") 
+            5. For date ranges, use date column not match_date
+        </requirements>
     </instructions>
     """
     
-    # Get tools for the agent from the claude_tools module
-    tools = get_claude_tools()
-    
-    # Import date module for context
-    from datetime import datetime
-    import re, calendar
-    from analysis.duckdb_analyzer import DuckDBAnalyzer
+    # Get schema information
     analyzer = DuckDBAnalyzer(parquet_file)
     schema_list, schema_json = analyzer.get_schema()
-    enriched_context = f"Schema Info: {schema_json}"
+    # Create a compact schema representation instead of using the full JSON
+    compact_schema = "Columns: " + ", ".join([f"{col['column_name']} ({col['data_type']})" for col in schema_list])
+    enriched_context = f"Schema: {compact_schema}"
+    
+    # Only add date filtering context if specifically asked about a month/year
     time_match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re.IGNORECASE)
     if time_match:
         month_str = time_match.group(1)
@@ -125,28 +114,17 @@ def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking
         start_date = f"{year_str}-{month_num:02d}-01"
         last_day = calendar.monthrange(int(year_str), month_num)[1]
         end_date = f"{year_str}-{month_num:02d}-{last_day:02d}"
-        filter_query = f"SELECT * FROM input_data WHERE match_date >= '{start_date}' AND match_date <= '{end_date}'"
-        filtered_results = analyzer.execute_query(filter_query)
-        enriched_context += f" | Filtered Data for {month_str.title()} {year_str}: {filtered_results.get('result','')}"
+        # Instead of adding full filtered results, just add the date range info
+        enriched_context += f" | Date range: {start_date} to {end_date}"
  
     # Get current date information
     current_date = datetime.now()
  
-    # Prepare the initial message with enriched context
-    initial_message = f"""I need to analyze data in a parquet file.
-
-    TODAY'S DATE: {current_date.strftime('%Y-%m-%d')}
-
-    My question is: {question}
-
-    The parquet file is located at: {parquet_file}
-
-    CONTEXT: {enriched_context}
-
-    IMPORTANT: When processing time-related terms like 'this month', 'last week', etc.,
-    use the current date specified above as reference. Also, when searching for teams,
-    be aware that team names might have variations (e.g., 'Team Name' and 'Team Name (1)')
-    and should be considered the same entity for analysis purposes.
+    # Prepare the initial message with enriched context, but more concise
+    initial_message = f"""Question: {question}
+    Today's date: {current_date.strftime('%Y-%m-%d')}
+    Data source: {parquet_file}
+    {enriched_context}
     """
     
     messages = [{"role": "user", "content": initial_message}]
@@ -154,29 +132,47 @@ def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking
     # Map tool names to their corresponding functions
     tool_functions = get_tool_mapping()
     
+    # Get tools for the agent from the claude_tools module
+    tools = get_claude_tools()
+    
+    # Setup retry logic
+    max_retries = 3
+    base_delay = 5  # seconds
+    client = anthropic.Anthropic(api_key=api_key)
+    
+    # Begin the agent loop
     max_iterations = 10
     current_iteration = 0
     
-    # Begin the agent loop
     while current_iteration < max_iterations:
         current_iteration += 1
         console.rule(f"[yellow]Agent Loop {current_iteration}/{max_iterations}[/yellow]")
         
-        try:
-            response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
-                max_tokens=max_tokens,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget_tokens,
-                },
-                messages=messages,
-                system=system_prompt,
-                tools=tools,
-            )
-        except Exception as e:
-            console.print(f"[red]Error in API call: {str(e)}[/red]")
-            break
+        # Handle API calls with retry logic for rate limits
+        for retry in range(max_retries):
+            try:
+                response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=max_tokens,
+                    thinking={
+                        "type": "enabled",
+                        "budget_tokens": thinking_budget_tokens,
+                    },
+                    messages=messages,
+                    system=system_prompt,
+                    tools=tools,
+                )
+                break  # Exit retry loop on success
+            except anthropic.RateLimitError as e:
+                console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
+                if retry < max_retries - 1:
+                    time.sleep(base_delay * (2 ** retry))  # Exponential backoff
+                else:
+                    console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
+                    return  # Exit the function if all retries failed
+            except Exception as e:
+                console.print(f"[red]Error in API call: {str(e)}[/red]")
+                return  # Exit the function on other errors
         
         # Log the API response with rich formatting
         console.print(
@@ -262,15 +258,87 @@ def run_agent(question: str, parquet_file: str, max_tokens: int = 4000, thinking
     console.print("[yellow]Reached iteration limit or user exited.[/yellow]")
 
 
+def create_team_dataset(team: str, parquet_file: str, output_file: str = None):
+    """
+    Create a filtered dataset for a specific team and save it as a new parquet file.
+    
+    Args:
+        team: The team name to filter the dataset by
+        parquet_file: Path to the source parquet file
+        output_file: Path to save the filtered dataset as a parquet file (optional)
+    """
+    if not output_file:
+        # Generate output filename based on team name if not provided
+        output_dir = os.path.dirname(parquet_file)
+        team_slug = team.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+        output_file = os.path.join(output_dir, f"{team_slug}_dataset.parquet")
+    
+    # Import the build_dataset function from the module
+    from analysis.duckdb_analyzer import build_dataset
+    
+    # Build the dataset
+    console.print(f"[yellow]Building dataset for team '{team}'...[/yellow]")
+    result = build_dataset(team, parquet_file, output_file)
+    
+    if "error" in result:
+        console.print(f"[red]Error building dataset: {result['error']}[/red]")
+        return
+    
+    console.print(f"[green]Dataset built successfully![/green]")
+    console.print(f"[green]Found {result['row_count']} matches involving {team}[/green]")
+    console.print(f"[green]Dataset saved to: {result['output_file']}[/green]")
+    
+    return result
+
+def create_compact_dataset(parquet_file: str, output_format: str = "compact"):
+    """
+    Create a compact representation of match data optimized for Claude's context window.
+    
+    Args:
+        parquet_file: Path to the parquet file containing match data
+        output_format: Format style ('compact', 'table', or 'csv')
+    """
+    # Import the compact_dataset function from the module
+    from analysis.duckdb_analyzer import compact_dataset
+    
+    # Create compact representation
+    console.print(f"[yellow]Creating compact dataset representation in '{output_format}' format...[/yellow]")
+    result = compact_dataset(parquet_file, output_format)
+    
+    if "error" in result:
+        console.print(f"[red]Error creating compact dataset: {result['error']}[/red]")
+        return
+    
+    console.print(f"[green]Compact dataset created successfully![/green]")
+    console.print(f"[green]Processed {result['row_count']} matches[/green]")
+    console.print(f"[green]Original size: {result['original_size_bytes']} bytes[/green]")
+    console.print(f"[green]Compact size: {result['compact_size_bytes']} bytes[/green]")
+    console.print(f"[green]Compression ratio: {result['compression_ratio']}[/green]")
+    
+    # Print the compact dataset
+    syntax = Syntax(result['result'], "text", theme="monokai", line_numbers=True, word_wrap=True)
+    console.print(
+        Panel(
+            syntax,
+            title=f"[bold]Compact Dataset ({output_format} format)[/bold]",
+            border_style="green",
+        )
+    )
+    
+    return result
+
 def main():
     parser = argparse.ArgumentParser(description="DuckDB Query Agent using Claude 3.7")
-    parser.add_argument("-q", "--question", required=True, help="Natural language question to ask about the data")
+    
+    # Unified interface - everything goes through run_agent
+    parser.add_argument("-q", "--question", required=True, help="Natural language question or request for the agent")
     parser.add_argument("-f", "--file", required=True, help="Path to the parquet file")
     parser.add_argument("--max_tokens", type=int, default=4000, help="Maximum number of tokens in the response")
-    parser.add_argument("--thinking_budget", type=int, default=2000, help="Budget for thinking tokens")
+    parser.add_argument("--thinking_budget", type=int, default=1024, help="Budget for thinking tokens")
     
     args = parser.parse_args()
     
+    # All operations go through run_agent, which will let Claude determine which tool to use
     run_agent(
         question=args.question,
         parquet_file=args.file,

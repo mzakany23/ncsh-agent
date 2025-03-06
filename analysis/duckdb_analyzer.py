@@ -89,6 +89,27 @@ class DuckDBAnalyzer:
         try:
             if not query:
                 raise ValueError("No SQL query provided")
+            
+            # Preprocess query to ensure correct table name is used
+            # Replace any instances of 'FROM data' or 'FROM "data"' with 'FROM input_data'
+            import re
+            corrected_query = re.sub(r'\bFROM\s+["\']?data["\']?\b', 'FROM input_data', query, flags=re.IGNORECASE)
+            corrected_query = re.sub(r'\bJOIN\s+["\']?data["\']?\b', 'JOIN input_data', corrected_query, flags=re.IGNORECASE)
+            
+            # Check if the query was modified and log a warning
+            if corrected_query != query:
+                console.log("[WARNING] Query modified to use correct table name 'input_data' instead of 'data'")
+                console.log(f"Original query: {query}")
+                console.log(f"Corrected query: {corrected_query}")
+                query = corrected_query
+            
+            # Check for match_date vs date column mismatch
+            if 'match_date' in query and 'date' in [col['column_name'] for col in self.get_schema()[0]]:
+                corrected_query = query.replace('match_date', 'date')
+                console.log("[WARNING] Query modified to use correct column name 'date' instead of 'match_date'")
+                console.log(f"Original query: {query}")
+                console.log(f"Corrected query: {corrected_query}")
+                query = corrected_query
                 
             result = self.conn.execute(query).fetchall()
             column_names = [desc[0] for desc in self.conn.description]
@@ -369,3 +390,130 @@ def query_to_sql(reasoning: str, question: str, schema_info: str) -> Dict:
             return [row[0] for row in result]
         except Exception as e:
             raise ValueError(f"Error retrieving unique values: {str(e)}")
+
+def compact_dataset(parquet_file: str, output_format: str = "compact") -> Dict[str, Any]:
+    """
+    Create a compact representation of match data optimized for Claude's context window.
+    Extracts only essential fields and formats them in a space-efficient way.
+    
+    Args:
+        parquet_file: Path to the Parquet file containing match data
+        output_format: Format style ('compact', 'table', or 'csv')
+        
+    Returns:
+        Dictionary with the compact dataset as a string and stats about the compaction
+    """
+    try:
+        try:
+            from .duckdb_analyzer import DuckDBAnalyzer
+        except Exception:
+            from duckdb_analyzer import DuckDBAnalyzer
+            
+        analyzer = DuckDBAnalyzer(parquet_file)
+        
+        # Query to get only essential fields, ordering by date
+        query = """
+        SELECT 
+            date, 
+            home_team, 
+            away_team, 
+            home_score, 
+            away_score, 
+            league
+        FROM input_data 
+        ORDER BY date
+        """
+        
+        # Execute query and get DataFrame
+        df = analyzer.conn.execute(query).df()
+        
+        # Handle missing values
+        df['home_score'] = df['home_score'].fillna(0).astype(int)
+        df['away_score'] = df['away_score'].fillna(0).astype(int)
+        
+        # Create more compact column names
+        df = df.rename(columns={
+            'date': 'dt',
+            'home_team': 'ht',
+            'away_team': 'at',
+            'home_score': 'hs',
+            'away_score': 'as',
+            'league': 'lg'
+        })
+        
+        # Format the date as simple YYYY-MM-DD
+        df['dt'] = df['dt'].dt.strftime('%Y-%m-%d')
+        
+        # Truncate league names to save space (if needed)
+        if output_format == 'compact':
+            df['lg'] = df['lg'].apply(lambda x: x[:20] + '...' if x and len(x) > 20 else x)
+            
+        row_count = len(df)
+        original_size = df.memory_usage(deep=True).sum()
+        
+        # Format the output according to the requested format
+        if output_format == 'table':
+            # Tabular format with fixed width columns
+            output = "DATE       | HOME TEAM             | AWAY TEAM             | H | A | LEAGUE\n"
+            output += "-" * 100 + "\n"
+            for _, row in df.iterrows():
+                output += f"{row['dt']:<10} | {row['ht']:<22} | {row['at']:<22} | {row['hs']:<1} | {row['as']:<1} | {row['lg']}\n"
+                
+        elif output_format == 'csv':
+            # CSV format
+            output = "dt,ht,at,hs,as,lg\n"
+            for _, row in df.iterrows():
+                output += f"{row['dt']},{row['ht']},{row['at']},{row['hs']},{row['as']},{row['lg']}\n"
+                
+        else:  # compact format (default)
+            # Ultra-compact format
+            output = """COMPACT FORMAT: dt=date, ht=home_team, at=away_team, hs=home_score, as=away_score, lg=league\n"""
+            for _, row in df.iterrows():
+                # Format: YYYY-MM-DD|HomeTeam|AwayTeam|H|A|League
+                output += f"{row['dt']}|{row['ht']}|{row['at']}|{row['hs']}|{row['as']}|{row['lg']}\n"
+        
+        compact_size = len(output.encode('utf-8'))
+        compression_ratio = round((1 - (compact_size / original_size)) * 100, 2) if original_size > 0 else 0
+        
+        return {
+            "result": output,
+            "row_count": row_count,
+            "original_size_bytes": int(original_size),
+            "compact_size_bytes": compact_size,
+            "compression_ratio": f"{compression_ratio}%",
+            "format": output_format
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, Any]:
+    """
+    Build a new dataset by filtering the input dataset for games involving the given team.
+    The new dataset is saved as a Parquet file at the specified output path.
+
+    Args:
+        team: The team name to filter (searches both home_team and away_team columns).
+        parquet_file: Path to the original Parquet file.
+        output_file: Path to save the filtered dataset as a Parquet file.
+
+    Returns:
+        Dictionary with a success message, row count, and output file path, or an error message.
+    """
+    try:
+        from .duckdb_analyzer import DuckDBAnalyzer  # local import to avoid circular dependency issues
+    except Exception as e:
+        # fallback import if needed
+        from duckdb_analyzer import DuckDBAnalyzer
+
+    try:
+        analyzer = DuckDBAnalyzer(parquet_file)
+        query = f"SELECT * FROM input_data WHERE home_team = '{team}' OR away_team = '{team}'"
+        result = analyzer.execute_query(query)
+        # Use DuckDB connection to fetch DataFrame directly
+        df = analyzer.conn.execute(query).df()
+        row_count = len(df)
+        df.to_parquet(output_file, index=False)
+        return {"result": f"Dataset built successfully with {row_count} records.", "row_count": row_count, "output_file": output_file}
+    except Exception as e:
+        return {"error": str(e)}

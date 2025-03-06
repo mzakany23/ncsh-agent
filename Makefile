@@ -1,4 +1,4 @@
-.PHONY: setup test clean format lint refresh-data query-llama setup-env debug-query
+.PHONY: setup test clean format lint refresh-data query-llama setup-env debug-query create-dataset
 
 # Default Python interpreter
 PYTHON = python3
@@ -67,3 +67,22 @@ debug-query: requirements
 	@$(UV) pip sync requirements.txt
 	@echo "\nChecking analysis module imports:"
 	$(PYTHON) -c "import sys; sys.path.append('.'); from analysis.duckdb_analyzer import get_schema, execute_sql, validate_sql; print('get_schema signature:', get_schema.__code__.co_varnames[:get_schema.__code__.co_argcount]); print('execute_sql signature:', execute_sql.__code__.co_varnames[:execute_sql.__code__.co_argcount]); print('validate_sql signature:', validate_sql.__code__.co_varnames[:validate_sql.__code__.co_argcount])"
+
+# Create a team-specific dataset
+create-dataset:
+	@if [ -z "$(team)" ]; then \
+		echo "Error: Missing team parameter. Usage: make create-dataset team=\"Team Name\"" && exit 1; \
+	fi
+	@if [ ! -f "$(DATA_DIR)/data.parquet" ]; then \
+		echo "Warning: No data file found. Please check that the data exists at $(DATA_DIR)/data.parquet" && exit 1; \
+	fi
+	@echo "Creating dataset for team: \"$(team)\""
+	python cli.py -q "Create a dataset for team $(team)$(if $(output), and save it to $(output))" -f "$(DATA_DIR)/data.parquet"
+
+# Create a compact dataset representation optimized for Claude's context window
+compact-dataset:
+	@if [ ! -f "$(file)" ] && [ ! -f "$(DATA_DIR)/data.parquet" ]; then \
+		echo "Warning: No data file found. Please specify a file with file=\"path/to/file.parquet\" or ensure data exists at $(DATA_DIR)/data.parquet" && exit 1; \
+	fi
+	@echo "Creating compact dataset representation..."
+	python cli.py -q "Create a compact dataset representation in $(if $(format),$(format),compact) format" -f "$(if $(file),$(file),$(DATA_DIR)/data.parquet)"
