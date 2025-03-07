@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ncsoccer-ui
+    ports:
+      - "8503:8501"
+    volumes:
+      - ..:/app
+      - ./memory:/app/ui/memory
+      - ../analysis/data:/app/ui/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PARQUET_FILE=${PARQUET_FILE:-/app/ui/data/data.parquet}
+      - MEMORY_PATH=/app/memory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
