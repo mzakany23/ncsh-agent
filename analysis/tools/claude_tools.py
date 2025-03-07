@@ -13,7 +13,12 @@ import json
 import traceback
 from typing import Dict, List, Any, Optional
 from rich.console import Console
-from llama_index.core.tools import FunctionTool
+try:
+    from llama_index.core.tools import FunctionTool
+except ModuleNotFoundError:
+    print("llama_index module not found; using dummy FunctionTool")
+    class FunctionTool:
+        pass
 
 # Import analysis functions from the analysis module
 from analysis.duckdb_analyzer import (
@@ -34,10 +39,10 @@ console = Console()
 def complete_task(reasoning: str) -> Dict:
     """
     Tool for finalizing task and providing the final response.
-    
+
     Args:
         reasoning: Final summary and answer to the user's question
-        
+
     Returns:
         Dictionary with task completion status or error message
     """
@@ -46,7 +51,7 @@ def complete_task(reasoning: str) -> Dict:
             error_message = "No reasoning provided for task completion."
             console.log(f"[tool_complete_task] Error: {error_message}")
             return {"error": error_message}
-            
+
         console.log(f"[tool_complete_task] reasoning: {reasoning}")
         return {"result": "Task completed"}
     except Exception as e:
@@ -58,12 +63,12 @@ def complete_task(reasoning: str) -> Dict:
 def summarize_results(reasoning: str, data: str, summarization_type: str) -> Dict:
     """
     Tool for summarizing query results through a prompt.
-    
+
     Args:
         reasoning: Why summarization is needed and what aspects to focus on
         data: The data to be summarized (usually query results)
         summarization_type: Type of summarization needed (brief, detailed, comparative, etc.)
-        
+
     Returns:
         Dictionary with summarized results or error message
     """
@@ -72,16 +77,16 @@ def summarize_results(reasoning: str, data: str, summarization_type: str) -> Dic
             error_message = "No data provided for summarization."
             console.log(f"[tool_summarize_results] Error: {error_message}")
             return {"error": error_message}
-            
+
         # Get API key from environment variable
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             error_message = "ANTHROPIC_API_KEY environment variable is not set."
             console.log(f"[tool_summarize_results] Error: {error_message}")
             return {"error": error_message}
-        
+
         client = anthropic.Anthropic(api_key=api_key)
-        
+
         # Define prompt based on summarization type
         prompts = {
             "brief": "Provide a very concise summary of the key insights from this data. Focus only on the most important points and keep it to 2-3 sentences.",
@@ -90,10 +95,10 @@ def summarize_results(reasoning: str, data: str, summarization_type: str) -> Dic
             "insights": "Extract 3-5 key actionable insights from this data that would be valuable for decision-making.",
             "narrative": "Create a narrative story that explains what this data shows in an engaging, conversational way that non-technical stakeholders would understand."
         }
-        
+
         # Choose appropriate prompt or use default
         prompt_text = prompts.get(summarization_type.lower(), "Summarize the following data in a clear, concise manner:")
-        
+
         # Call Claude for summarization
         response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
@@ -105,10 +110,10 @@ def summarize_results(reasoning: str, data: str, summarization_type: str) -> Dic
                 }
             ]
         )
-        
+
         # Extract the summarized content
         summarized_text = response.content[0].text if response.content else "No summary generated."
-        
+
         console.log(f"[tool_summarize_results] Generated summary of type '{summarization_type}'")
         return {"result": summarized_text}
     except Exception as e:
@@ -120,7 +125,7 @@ def summarize_results(reasoning: str, data: str, summarization_type: str) -> Dic
 def get_claude_tools() -> List[Dict]:
     """
     Get the tool definitions for Claude 3.7 API.
-    
+
     Returns:
         List of tool definitions in the Claude API format
     """
@@ -206,7 +211,7 @@ def get_claude_tools() -> List[Dict]:
             },
         },
         {
-            "name": "validate_sql", 
+            "name": "validate_sql",
             "description": "Validate SQL queries without executing them",
             "input_schema": {
                 "type": "object",
@@ -335,7 +340,7 @@ def tool_compact_dataset(tool_input: Dict) -> Dict:
 def get_tool_mapping() -> Dict:
     """
     Get a mapping of tool names to their implementation functions.
-    
+
     Returns:
         Dictionary mapping tool names to functions
     """
