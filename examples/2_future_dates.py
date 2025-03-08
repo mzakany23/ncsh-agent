@@ -7,12 +7,7 @@ which is a common edge case that requires special handling.
 
 import os
 import sys
-import importlib
-
-# Import from base module using importlib
-base_module = importlib.import_module(".0_base", package="examples")
-BaseSmokeTest = base_module.BaseSmokeTest
-console = base_module.console
+from examples import BaseSmokeTest, console
 
 class FutureDates(BaseSmokeTest):
     """Tests for future date queries."""
