@@ -32,7 +32,6 @@ def main():
     query_parser.add_argument("question", help="The natural language question to answer")
     query_parser.add_argument("--parquet", "-p", help="Path to parquet file", default="analysis/data/data.parquet")
     query_parser.add_argument("--max-tokens", "-m", help="Maximum tokens in response", type=int, default=4000)
-    query_parser.add_argument("--thinking-budget", "-t", help="Budget for thinking tokens", type=int, default=1024)
 
     # Dataset creation command
     team_parser = subparsers.add_parser("team", help="Create a filtered dataset for a specific team")
@@ -54,7 +53,7 @@ def main():
 
     # Execute the appropriate command
     if args.command == "query":
-        run_agent(args.question, args.parquet, args.max_tokens, args.thinking_budget)
+        run_agent(args.question, args.parquet, args.max_tokens)
     elif args.command == "team":
         create_team_dataset(args.team_name, args.parquet, args.output)
     elif args.command == "compact":
