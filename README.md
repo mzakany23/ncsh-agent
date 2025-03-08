@@ -1,5 +1,7 @@
 # DuckDB Soccer Analysis Agent with Claude 3.7
 
+![NC Soccer Agent Interface](ncsoccer.png)
+
 An agentic approach to query soccer match data using Claude 3.7's tool calling capabilities. This project allows you to ask natural language questions about soccer match data stored in parquet files and get accurate SQL-based answers.
 
 ## Features
