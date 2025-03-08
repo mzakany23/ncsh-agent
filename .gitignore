@@ -46,3 +46,8 @@ ENV/
 
 # Project specific
 requirements.txt
+
+# Data files
+analysis/data/
+*.parquet
+ui/data/
