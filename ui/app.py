@@ -1,7 +1,7 @@
 """
 Streamlit UI for NC Soccer Agent
 
-This application provides a user-friendly interface for querying soccer match data 
+This application provides a user-friendly interface for querying soccer match data
 using natural language questions powered by Claude 3.7.
 """
 
@@ -69,7 +69,7 @@ st.sidebar.title("⚙️ Configuration")
 
 # Input for Anthropic API key
 api_key = st.sidebar.text_input(
-    "Anthropic API Key", 
+    "Anthropic API Key",
     value=os.environ.get("ANTHROPIC_API_KEY", ""),
     type="password",
     help="Enter your Anthropic API key to enable Claude 3.7."
@@ -136,22 +136,22 @@ parquet_file = st.sidebar.text_input(
 class StreamlitChatMemory:
     def __init__(self):
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=3900)
-        
+
     def add_message(self, role, content):
         # MessageRole and ChatMessage are now imported at the module level
-        
+
         if role == "user":
             message_role = MessageRole.USER
         elif role == "assistant":
             message_role = MessageRole.ASSISTANT
         else:
             message_role = MessageRole.SYSTEM
-            
+
         self.memory.put(ChatMessage(role=message_role, content=content))
-        
+
     def get_messages(self):
         return self.memory.get()
-    
+
     def get_messages_as_string(self):
         messages = self.memory.get()
         result = ""
@@ -160,7 +160,7 @@ class StreamlitChatMemory:
             role_name = "User" if msg.role == MessageRole.USER else "Assistant"
             result += f"{role_name}: {msg.content}\n\n"
         return result
-    
+
     def clear(self):
         self.memory.reset()
 
@@ -188,10 +188,10 @@ if question := st.chat_input("Ask a question about the match data..."):
     # Add user message to history and display it
     st.session_state.messages.append({"role": "user", "content": question})
     st.session_state.memory.add_message("user", question)
-    
+
     with st.chat_message("user"):
         st.markdown(question)
-    
+
     # Display assistant response with a spinner
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
@@ -203,7 +203,7 @@ if question := st.chat_input("Ask a question about the match data..."):
                 else:
                     # Get the conversation history as context
                     conversation_history = st.session_state.memory.get_messages_as_string()
-                    
+
                     # Format the context in a cleaner way for the run_agent function
                     if conversation_history and len(st.session_state.messages) > 2:  # Only add history if we have a meaningful conversation
                         # Create a clear but compact conversation history for the agent
@@ -212,20 +212,20 @@ if question := st.chat_input("Ask a question about the match data..."):
                     else:
                         context = ""
                         logger.info("No conversation context added")
-                        
+
                     enriched_question = f"{question}{context}".strip()
                     logger.info(f"Final question being processed: {enriched_question[:100]}...")
-                    
+
                     # Use the run_agent function from cli.py as originally designed
                     import io
                     import sys
                     import re
                     import json
-                    
+
                     try:
                         # Log the question being processed
                         logger.info(f"Processing question with run_agent_once: {enriched_question[:100]}...")
-                        
+
                         # Prepare conversation history for the agent if this is a follow-up question
                         conversation_history = None
                         if len(st.session_state.messages) > 2:  # More than just the welcome message and current question
@@ -242,32 +242,31 @@ if question := st.chat_input("Ask a question about the match data..."):
                                 "content": enriched_question
                             })
                             logger.info(f"Added conversation history with {len(conversation_history)} messages")
-                        
+
                         # Run the agent with the question (non-interactive version)
                         response = run_agent_once(
-                            enriched_question, 
-                            parquet_file, 
-                            max_tokens=4000, 
-                            thinking_budget_tokens=1024,
+                            enriched_question,
+                            parquet_file,
+                            max_tokens=4000,
                             conversation_history=conversation_history
                         )
-                        
+
                         # Set raw_output to the response for compatibility with existing code
                         raw_output = response
                         logger.info(f"Received response with {len(raw_output)} characters")
                         logger.info(f"Response preview: {raw_output[:200].replace(chr(10), ' ')}")
-                        
+
                         # Check if we got any output
                         if not raw_output or len(raw_output.strip()) == 0:
                             raise ValueError("No output was returned from the analysis. Please try again.")
-                        
+
                         # Extract the Claude response using regex patterns
                         claude_patterns = [
                             r'\[cyan\]Claude:\[/cyan\]\s*(.*?)(?=\[|$)',  # Rich formatted output
                             r'Claude:\s*([^\[\n].*?)(?=\n\n|$)',         # Plain format
                             r'Claude \([^)]+\):\s*(.*?)(?=\n\n|$)'     # Format with parentheses
                         ]
-                        
+
                         # Try to find all Claude responses
                         all_responses = []
                         for pattern in claude_patterns:
@@ -277,7 +276,7 @@ if question := st.chat_input("Ask a question about the match data..."):
                                 if response_text:
                                     all_responses.append(response_text)
                                     logger.info(f"Found Claude response with pattern {pattern[:20]}...")
-                        
+
                         # If we found Claude responses, join them together
                         if all_responses:
                             response = '\n\n'.join(all_responses)
@@ -297,27 +296,27 @@ if question := st.chat_input("Ask a question about the match data..."):
                             else:
                                 response = raw_output
                                 logger.info("No Claude markers found - using raw output")
-                        
+
                         # Clean up the response for better formatting
                         # Remove any remaining rich formatting marks
                         raw_response = re.sub(r'\[.*?\]', '', response)
-                        
+
                         # Summarize the raw response using Claude to make it user-friendly
                         # Get API key from environment variable
                         api_key = os.environ.get("ANTHROPIC_API_KEY")
                         if not api_key:
                             logger.error("ANTHROPIC_API_KEY environment variable is not set.")
                             raise ValueError("ANTHROPIC_API_KEY environment variable is not set.")
-                            
+
                         # Initialize Claude client
                         client = anthropic.Anthropic(api_key=api_key)
-                        
+
                         # Create a system prompt for summarization
                         system_prompt = """
                         You are a soccer match analyst who provides clear, concise summaries of soccer match analysis.
                         Your task is to take the raw output from a data analysis process and convert it into a user-friendly
                         response that focuses only on the analysis results and insights, not the process.
-                        
+
                         Format your response using Markdown for better readability.
                         Include all relevant statistics from the original analysis.
                         Preserve any tables or charts from the original output.
@@ -325,20 +324,20 @@ if question := st.chat_input("Ask a question about the match data..."):
                         Remove any technical details about SQL queries, tooling, or processing steps.
                         Focus only on the soccer match insights that answer the user's question.
                         """
-                        
+
                         # Create a user prompt with the raw response
                         user_prompt = f"""
                         The following is the raw output from a soccer match analysis tool that contains both
-                        the process (SQL queries, tool calls, etc.) and the actual analysis results. 
+                        the process (SQL queries, tool calls, etc.) and the actual analysis results.
                         Please summarize this into a clean, user-friendly response that only includes
                         the relevant soccer match analysis insights.
-                        
+
                         Original question: {question}
-                        
+
                         Raw output:
                         {raw_response}
                         """
-                        
+
                         try:
                             # Call Claude API to summarize the response
                             logger.info("Calling Claude to summarize the response")
@@ -348,7 +347,7 @@ if question := st.chat_input("Ask a question about the match data..."):
                                 system=system_prompt,
                                 messages=[{"role": "user", "content": user_prompt}]
                             )
-                            
+
                             # Extract the summarized response
                             response = claude_summary.content[0].text
                             logger.info(f"Received summarized response from Claude with {len(response)} characters")
@@ -357,20 +356,20 @@ if question := st.chat_input("Ask a question about the match data..."):
                             logger.error(traceback.format_exc())
                             # Fall back to the raw response if summarization fails
                             response = raw_response
-                            
+
                             # Ensure it's formatted as markdown
                             if not any(md_marker in response for md_marker in ['#', '|', '*', '-', '```']):
                                 response = f"```\n{response}\n```"
-                                
+
                         logger.info(f"Final formatted response length: {len(response)}")
-                        
+
                     except Exception as e:
                         logger.error(f"Error processing question: {e}")
                         raise ValueError(f"An error occurred while analyzing the data: {str(e)}")
-                    
+
                     # Update the message placeholder with the response
                     message_placeholder.markdown(response)
-                    
+
                     # Add assistant response to history
                     st.session_state.messages.append({"role": "assistant", "content": response})
                     st.session_state.memory.add_message("assistant", response)

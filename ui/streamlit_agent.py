@@ -60,17 +60,18 @@ def get_tool_mapping():
                 "execute_sql": lambda x: {"result": "Error: Tool not available"},
                 "complete_task": None}
 
-def run_agent_once(question: str, parquet_file: str, max_tokens: int = 4000, thinking_budget_tokens: int = 1024,
+def run_agent_once(question: str, parquet_file: str, max_tokens: int = 4000,
+                  thinking_budget_tokens: Optional[int] = None,
                   conversation_history: List[Dict[str, str]] = None):
     """
-    Modified version of run_agent for Streamlit that processes a question only once,
-    without asking for additional input. It also allows passing conversation history.
+    Modified version of run_agent for Streamlit that processes a question using the
+    recursive tool approach.
 
     Args:
         question: Natural language question about the data
         parquet_file: Path to parquet file
         max_tokens: Maximum tokens for Claude response
-        thinking_budget_tokens: Maximum tokens for Claude thinking
+        thinking_budget_tokens: Ignored (kept for backward compatibility)
         conversation_history: Optional list of previous messages
 
     Returns:
@@ -94,6 +95,8 @@ RESPONSE GUIDELINES:
 3. Summarize findings in a way that's easy to understand
 4. Include specific statistics, trends, and insights whenever possible
 5. When no data is found, explain why and suggest alternatives
+6. For team names that don't match exactly, use fuzzy_match_teams tool to find the closest matches
+7. For complex queries, break down your analysis into multiple steps
 
 Always execute SQL queries when analyzing data to provide concrete evidence for your conclusions.
 Ensure your responses are accurate, comprehensive, and provide valuable insights to the user.
@@ -125,177 +128,84 @@ Ensure your responses are accurate, comprehensive, and provide valuable insights
     base_delay = 5  # seconds
     client = anthropic.Anthropic(api_key=api_key)
 
+    # Track tool calls
+    total_tool_calls = 0
+
+    # Track the final response from Claude
+    final_response_text = ""
+
     try:
-        # Handle API calls with retry logic for rate limits
-        for retry in range(max_retries):
-            try:
-                console.print(f"[yellow]Making API call to Claude (attempt {retry+1}/{max_retries})[/yellow]")
-                response = client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
-                    max_tokens=max_tokens,
-                    thinking={"type": "disabled"},
-                    messages=messages,
-                    system=system_prompt,
-                    tools=tools,
-                )
-                console.print("[green]API call successful[/green]")
-                break  # Exit retry loop on success
-            except anthropic.RateLimitError as e:
-                console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
-                if retry < max_retries - 1:
-                    time.sleep(base_delay * (2 ** retry))  # Exponential backoff
-                else:
-                    console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
+        # Process messages recursively until Claude provides a complete response
+        while True:
+            # Handle API calls with retry logic for rate limits
+            for retry in range(max_retries):
+                try:
+                    console.print(f"[yellow]Making API call to Claude (attempt {retry+1}/{max_retries})[/yellow]")
+                    response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=max_tokens,
+                        messages=messages,
+                        system=system_prompt,
+                        tools=tools,
+                    )
+                    console.print("[green]API call successful[/green]")
+                    break  # Exit retry loop on success
+                except anthropic.RateLimitError as e:
+                    console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
+                    if retry < max_retries - 1:
+                        time.sleep(base_delay * (2 ** retry))  # Exponential backoff
+                    else:
+                        console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
+                        raise
+                except Exception as e:
+                    console.print(f"[red]API call error: {str(e)}[/red]")
                     raise
-            except Exception as e:
-                console.print(f"[red]API call error: {str(e)}[/red]")
-                raise
 
-        # Log response content types for debugging
-        console.print("[blue]Response content types:[/blue]")
-        for i, block in enumerate(response.content):
-            block_type = getattr(block, 'type', 'unknown')
-            console.print(f"  Block {i}: {block_type}")
-
-        # Process Claude's response
-        tool_calls = [block for block in response.content if getattr(block, 'type', None) == 'tool_use']
-        if tool_calls:
-            # Handle tool calls
-            for tool in tool_calls:
-                # Extract text content for logging
-                text_content = ""
-                for block in response.content:
-                    if hasattr(block, 'text') and block.text and block.text.strip():
-                        text_content = block.text
-                        break
-
-                # Ensure text_content is never empty
-                if not text_content.strip():
-                    text_content = f"I'm analyzing the data about {question}. Let me use the {tool.name} tool to find relevant information."
-
-                console.print(f"[cyan]Claude:[/cyan] {text_content}")
-                console.print(f"[magenta]Tool call:[/magenta] {tool.name}({json.dumps(tool.input, indent=2)})")
-
-                if tool.name in tool_functions and tool_functions[tool.name] is not None:
-                    # Execute the tool and get the result
-                    tool_result = tool_functions[tool.name](tool.input)
-                    console.print(f"[green]Tool result:[/green] {json.dumps(tool_result, indent=2)}")
-
-                    # Add tool result to message history
-                    # Extract the text content properly
-                    content_text = text_content  # Already set above
-
-                    # Format as per Anthropic API documentation
-                    tool_result_message = {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": content_text
-                            },
-                            {
-                                "type": "tool_use",
-                                "id": tool.id,
-                                "name": tool.name,
-                                "input": tool.input
-                            }
-                        ]
-                    }
-                    messages.append(tool_result_message)
-
-                    # Add tool result to message history as user message with tool_result structure
-                    messages.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool.id,
-                                "content": json.dumps(tool_result)
-                            }
-                        ]
-                    })
-
-                    # Get Claude's response to the tool result
-                    console.print("[yellow]Making follow-up API call to Claude after tool use[/yellow]")
-                    for retry in range(max_retries):
-                        try:
-                            response = client.messages.create(
-                                model="claude-3-7-sonnet-20250219",
-                                max_tokens=max_tokens,
-                                thinking={"type": "disabled"},
-                                messages=messages,
-                                system=system_prompt,
-                                tools=tools,
-                            )
-                            console.print("[green]Follow-up API call successful[/green]")
-                            break
-                        except anthropic.RateLimitError as e:
-                            console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
-                            if retry < max_retries - 1:
-                                time.sleep(base_delay * (2 ** retry))
-                            else:
-                                console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
-                                raise
-                        except Exception as e:
-                            console.print(f"[red]Follow-up API call error: {str(e)}[/red]")
-                            raise
-
-                elif tool.name == "complete_task":
-                    console.print("[green]Task completed.[/green]")
-                    # Simply add the response to messages
-                    # Extract text content for the message
-                    resp_text = text_content  # Already set above
-
-                    # Ensure it's not empty
-                    if not resp_text.strip():
-                        resp_text = "I've completed the analysis of the data based on your request."
-
-                    messages.append({"role": "assistant", "content": [{"type": "text", "text": resp_text}]})
-                    return resp_text
-                else:
-                    raise ValueError(f"Unknown tool: {tool.name}")
-        else:
-            # No tool calls, just return the response content
-            # Extract text content properly
-            text_content = ""
+            # Extract text from response for return
+            response_text = ""
             for block in response.content:
-                if hasattr(block, 'text') and block.text and block.text.strip():
-                    text_content = block.text
-                    break
+                if hasattr(block, 'text') and block.text:
+                    console.print(f"[cyan]Claude:[/cyan] {block.text}")
+                    response_text += block.text
 
-            # Ensure text content is never empty - provide a meaningful fallback response
-            if not text_content.strip():
-                text_content = f"I've analyzed the data regarding '{question}'. Based on the available information, I can provide the following insights..."
+            # Update the final response text
+            if response_text:
+                final_response_text = response_text
 
-                # Check if we have any previous context from conversation history
-                if conversation_history and len(conversation_history) >= 2:
-                    prior_queries = [msg.get('content')[0].get('text') for msg in conversation_history if msg.get('role') == 'user' and isinstance(msg.get('content'), list)]
-                    if prior_queries:
-                        text_content += f" Your previous questions about {', '.join(prior_queries[:2])} provide context for this analysis."
+            # Process any tool calls
+            tool_calls = [block for block in response.content if getattr(block, 'type', None) == 'tool_use']
+            total_tool_calls += len(tool_calls)
 
-            console.print(f"[cyan]Claude (direct response):[/cyan] {text_content}")
-            messages.append({"role": "assistant", "content": [{"type": "text", "text": text_content}]})
-            return text_content
-
-        # Return the final response content
-        # Extract text content for final output
-        final_text = ""
-        for block in response.content:
-            if hasattr(block, 'text') and block.text and block.text.strip():
-                final_text = block.text
+            # If no tool calls, we're done!
+            if not tool_calls:
                 break
 
-        # Ensure final text is never empty - provide a detailed fallback response
-        if not final_text.strip():
-            final_text = f"Based on the analysis of the soccer match data regarding '{question}', I can provide the following insights and observations. The data includes information about teams, matches, scores, and leagues that can help answer your question."
+            # Add Claude's response to the messages
+            messages.append({"role": "assistant", "content": response.content})
 
-            # If we're in a follow-up query, reference previous context
-            if tool_calls:
-                tool_names = [tool.name for tool in tool_calls]
-                final_text += f" I used the {', '.join(tool_names)} to analyze the relevant data."
+            # Process tool calls one at a time
+            for tool in tool_calls:
+                console.print(f"[blue]Tool Call:[/blue] {tool.name}({json.dumps(tool.input, indent=2)})")
 
-        console.print(f"[cyan]Claude (final response):[/cyan] {final_text}")
-        return final_text
+                func = tool_functions.get(tool.name)
+                if func:
+                    # Execute the tool
+                    output = func(tool.input)
+                    result_text = output.get("error") or output.get("result", "")
+                    console.print(f"[green]Tool Result:[/green] {result_text}")
+
+                    # Add the tool result to messages
+                    messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool.id,
+                            "content": result_text
+                        }]
+                    })
+
+        # Return the final response text
+        return final_response_text
 
     except Exception as e:
         console.print(f"[red]Error in run_agent_once: {str(e)}[/red]")
