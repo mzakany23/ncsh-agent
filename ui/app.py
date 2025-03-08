@@ -16,9 +16,6 @@ import streamlit as st
 from typing import Dict, List, Any, Optional
 import anthropic
 from datetime import datetime
-from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.core.llms import ChatMessage, MessageRole
-from llama_index.core import Settings
 
 # Add parent directory to path to find modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -135,34 +132,24 @@ parquet_file = st.sidebar.text_input(
 # Initialize chat memory
 class StreamlitChatMemory:
     def __init__(self):
-        self.memory = ChatMemoryBuffer.from_defaults(token_limit=3900)
+        self.memory = []
 
     def add_message(self, role, content):
-        # MessageRole and ChatMessage are now imported at the module level
-
-        if role == "user":
-            message_role = MessageRole.USER
-        elif role == "assistant":
-            message_role = MessageRole.ASSISTANT
-        else:
-            message_role = MessageRole.SYSTEM
-
-        self.memory.put(ChatMessage(role=message_role, content=content))
+        self.memory.append({"role": role, "content": content})
 
     def get_messages(self):
-        return self.memory.get()
+        return self.memory
 
     def get_messages_as_string(self):
-        messages = self.memory.get()
         result = ""
-        for msg in messages:
+        for msg in self.memory:
             # Format the message in a way that's cleaner for the agent to process
-            role_name = "User" if msg.role == MessageRole.USER else "Assistant"
-            result += f"{role_name}: {msg.content}\n\n"
+            role_name = "User" if msg["role"] == "user" else "Assistant"
+            result += f"{role_name}: {msg['content']}\n\n"
         return result
 
     def clear(self):
-        self.memory.reset()
+        self.memory = []
 
 # Initialize memory in session state if it doesn't exist
 if 'memory' not in st.session_state:
@@ -232,14 +219,21 @@ if question := st.chat_input("Ask a question about the match data..."):
                             conversation_history = []
                             # Add previous exchanges as conversation history
                             for msg in st.session_state.messages[1:-1]:  # Skip welcome message and current question
-                                conversation_history.append({
-                                    "role": msg["role"],
-                                    "content": msg["content"]
-                                })
+                                # Format as per Claude API requirements
+                                if msg["role"] == "user":
+                                    conversation_history.append({
+                                        "role": "user",
+                                        "content": [{"type": "text", "text": msg["content"]}]
+                                    })
+                                else:
+                                    conversation_history.append({
+                                        "role": "assistant",
+                                        "content": [{"type": "text", "text": msg["content"]}]
+                                    })
                             # Add current question
                             conversation_history.append({
                                 "role": "user",
-                                "content": enriched_question
+                                "content": [{"type": "text", "text": enriched_question}]
                             })
                             logger.info(f"Added conversation history with {len(conversation_history)} messages")
 
