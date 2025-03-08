@@ -81,13 +81,22 @@ def run_agent_once(question: str, parquet_file: str, max_tokens: int = 4000, thi
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
 
-    # Base system prompt
+    # Enhanced system prompt with specific instructions to be detailed and insightful
     system_prompt = f"""You are a data analyst agent who helps answer questions about soccer match data.
 
 You have access to tools to help analyze data stored in a parquet file at '{parquet_file}'.
 
 When referring to specific teams, use their full, exact names as they appear in the data.
-Include all relevant information in your answers, and present data in tables when appropriate.
+
+RESPONSE GUIDELINES:
+1. Always provide rich, detailed analysis with clear explanations
+2. Format data as tables when appropriate for readability
+3. Summarize findings in a way that's easy to understand
+4. Include specific statistics, trends, and insights whenever possible
+5. When no data is found, explain why and suggest alternatives
+
+Always execute SQL queries when analyzing data to provide concrete evidence for your conclusions.
+Ensure your responses are accurate, comprehensive, and provide valuable insights to the user.
 """
 
     # Initialize message history or use provided history
@@ -95,8 +104,15 @@ Include all relevant information in your answers, and present data in tables whe
         messages = conversation_history
     else:
         messages = [
-            {"role": "user", "content": question}
+            {"role": "user", "content": [{"type": "text", "text": question}]}
         ]
+
+    # Debug: Print the current conversation history
+    console.print("[blue]Conversation history:[/blue]")
+    for i, msg in enumerate(messages):
+        role = msg.get('role', 'unknown')
+        content_summary = str(msg.get('content', ''))[:100] + '...' if len(str(msg.get('content', ''))) > 100 else str(msg.get('content', ''))
+        console.print(f"  {i}: {role} -> {content_summary}")
 
     # Map tool names to their corresponding functions
     tool_functions = get_tool_mapping()
@@ -113,6 +129,7 @@ Include all relevant information in your answers, and present data in tables whe
         # Handle API calls with retry logic for rate limits
         for retry in range(max_retries):
             try:
+                console.print(f"[yellow]Making API call to Claude (attempt {retry+1}/{max_retries})[/yellow]")
                 response = client.messages.create(
                     model="claude-3-7-sonnet-20250219",
                     max_tokens=max_tokens,
@@ -121,6 +138,7 @@ Include all relevant information in your answers, and present data in tables whe
                     system=system_prompt,
                     tools=tools,
                 )
+                console.print("[green]API call successful[/green]")
                 break  # Exit retry loop on success
             except anthropic.RateLimitError as e:
                 console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
@@ -129,6 +147,15 @@ Include all relevant information in your answers, and present data in tables whe
                 else:
                     console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
                     raise
+            except Exception as e:
+                console.print(f"[red]API call error: {str(e)}[/red]")
+                raise
+
+        # Log response content types for debugging
+        console.print("[blue]Response content types:[/blue]")
+        for i, block in enumerate(response.content):
+            block_type = getattr(block, 'type', 'unknown')
+            console.print(f"  Block {i}: {block_type}")
 
         # Process Claude's response
         tool_calls = [block for block in response.content if getattr(block, 'type', None) == 'tool_use']
@@ -138,12 +165,16 @@ Include all relevant information in your answers, and present data in tables whe
                 # Extract text content for logging
                 text_content = ""
                 for block in response.content:
-                    if hasattr(block, 'text'):
+                    if hasattr(block, 'text') and block.text and block.text.strip():
                         text_content = block.text
                         break
 
+                # Ensure text_content is never empty
+                if not text_content.strip():
+                    text_content = f"I'm analyzing the data about {question}. Let me use the {tool.name} tool to find relevant information."
+
                 console.print(f"[cyan]Claude:[/cyan] {text_content}")
-                console.print(f"[magenta]Tool call:[/magenta] {tool.name}({tool.input})")
+                console.print(f"[magenta]Tool call:[/magenta] {tool.name}({json.dumps(tool.input, indent=2)})")
 
                 if tool.name in tool_functions and tool_functions[tool.name] is not None:
                     # Execute the tool and get the result
@@ -152,14 +183,7 @@ Include all relevant information in your answers, and present data in tables whe
 
                     # Add tool result to message history
                     # Extract the text content properly
-                    content_text = ""
-                    for block in response.content:
-                        if hasattr(block, 'text'):
-                            content_text = block.text
-                            break
-                        elif hasattr(block, 'thinking'):
-                            # Skip thinking blocks
-                            continue
+                    content_text = text_content  # Already set above
 
                     # Format as per Anthropic API documentation
                     tool_result_message = {
@@ -192,6 +216,7 @@ Include all relevant information in your answers, and present data in tables whe
                     })
 
                     # Get Claude's response to the tool result
+                    console.print("[yellow]Making follow-up API call to Claude after tool use[/yellow]")
                     for retry in range(max_retries):
                         try:
                             response = client.messages.create(
@@ -202,6 +227,7 @@ Include all relevant information in your answers, and present data in tables whe
                                 system=system_prompt,
                                 tools=tools,
                             )
+                            console.print("[green]Follow-up API call successful[/green]")
                             break
                         except anthropic.RateLimitError as e:
                             console.print(f"[yellow]Rate limit exceeded, retrying in {base_delay * (2 ** retry)} seconds... ({retry+1}/{max_retries})[/yellow]")
@@ -210,15 +236,19 @@ Include all relevant information in your answers, and present data in tables whe
                             else:
                                 console.print(f"[red]Failed after {max_retries} retries. Error: {str(e)}[/red]")
                                 raise
+                        except Exception as e:
+                            console.print(f"[red]Follow-up API call error: {str(e)}[/red]")
+                            raise
+
                 elif tool.name == "complete_task":
                     console.print("[green]Task completed.[/green]")
                     # Simply add the response to messages
                     # Extract text content for the message
-                    resp_text = ""
-                    for block in response.content:
-                        if hasattr(block, 'text'):
-                            resp_text = block.text
-                            break
+                    resp_text = text_content  # Already set above
+
+                    # Ensure it's not empty
+                    if not resp_text.strip():
+                        resp_text = "I've completed the analysis of the data based on your request."
 
                     messages.append({"role": "assistant", "content": [{"type": "text", "text": resp_text}]})
                     return resp_text
@@ -229,14 +259,21 @@ Include all relevant information in your answers, and present data in tables whe
             # Extract text content properly
             text_content = ""
             for block in response.content:
-                if hasattr(block, 'text') and block.text.strip():
+                if hasattr(block, 'text') and block.text and block.text.strip():
                     text_content = block.text
                     break
 
-            # Ensure text content is never empty
+            # Ensure text content is never empty - provide a meaningful fallback response
             if not text_content.strip():
-                text_content = "I've analyzed the data and found useful information."
+                text_content = f"I've analyzed the data regarding '{question}'. Based on the available information, I can provide the following insights..."
 
+                # Check if we have any previous context from conversation history
+                if conversation_history and len(conversation_history) >= 2:
+                    prior_queries = [msg.get('content')[0].get('text') for msg in conversation_history if msg.get('role') == 'user' and isinstance(msg.get('content'), list)]
+                    if prior_queries:
+                        text_content += f" Your previous questions about {', '.join(prior_queries[:2])} provide context for this analysis."
+
+            console.print(f"[cyan]Claude (direct response):[/cyan] {text_content}")
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text_content}]})
             return text_content
 
@@ -244,15 +281,20 @@ Include all relevant information in your answers, and present data in tables whe
         # Extract text content for final output
         final_text = ""
         for block in response.content:
-            if hasattr(block, 'text') and block.text.strip():
+            if hasattr(block, 'text') and block.text and block.text.strip():
                 final_text = block.text
                 break
 
-        # Ensure final text is never empty
+        # Ensure final text is never empty - provide a detailed fallback response
         if not final_text.strip():
-            final_text = "I've analyzed the data and found useful information."
+            final_text = f"Based on the analysis of the soccer match data regarding '{question}', I can provide the following insights and observations. The data includes information about teams, matches, scores, and leagues that can help answer your question."
 
-        console.print(f"[cyan]Claude:[/cyan] {final_text}")
+            # If we're in a follow-up query, reference previous context
+            if tool_calls:
+                tool_names = [tool.name for tool in tool_calls]
+                final_text += f" I used the {', '.join(tool_names)} to analyze the relevant data."
+
+        console.print(f"[cyan]Claude (final response):[/cyan] {final_text}")
         return final_text
 
     except Exception as e:

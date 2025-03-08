@@ -4,7 +4,7 @@ Claude Tools Module
 This module defines the tools that Claude 3.7 can use via the Anthropic API's
 tool calling capabilities, implemented using the LlamaIndex FunctionTool pattern.
 
-This module imports the implementation from analysis/duckdb_analyzer.py module
+This module imports the implementation from analysis/database.py module
 to keep all analysis code insular to the analysis module.
 """
 
@@ -20,8 +20,8 @@ except ModuleNotFoundError:
     class FunctionTool:
         pass
 
-# Import analysis functions from the analysis module
-from analysis.duckdb_analyzer import (
+# Import analysis functions from the database module
+from analysis.database import (
     execute_sql,
     get_schema,
     validate_sql,
@@ -287,6 +287,31 @@ def get_claude_tools() -> List[Dict]:
                 "required": ["reasoning"],
             },
         },
+        {
+            "name": "check_date_range",
+            "description": "Check if data exists for a specific date range and return the available date range in the dataset",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "team_name": {
+                        "type": "string",
+                        "description": "The team name to search for (optional)"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start date in YYYY-MM-DD format (optional)"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format (optional)"
+                    },
+                    "parquet_file": {
+                        "type": "string",
+                        "description": "Path to the Parquet file, default: 'analysis/data/data.parquet'"
+                    }
+                }
+            }
+        }
     ]
 
 # Tool adapter functions that extract parameters from tool input dictionaries
@@ -336,6 +361,71 @@ def tool_compact_dataset(tool_input: Dict) -> Dict:
     output_format = tool_input.get("output_format", "compact")
     return compact_dataset(parquet_file, output_format)
 
+def tool_check_date_range(tool_input: Dict) -> Dict:
+    """Checks if data exists for a specific date range and returns the available date range in the dataset."""
+    try:
+        from analysis.database import DuckDBAnalyzer
+        import json
+
+        parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+        team_name = tool_input.get("team_name", None)
+        start_date = tool_input.get("start_date", None)
+        end_date = tool_input.get("end_date", None)
+
+        # Initialize the DuckDB analyzer with the parquet file
+        analyzer = DuckDBAnalyzer(parquet_file)
+
+        # Get the overall date range of the dataset
+        date_range_query = "SELECT MIN(date) AS earliest_date, MAX(date) AS latest_date FROM input_data;"
+        date_range_result = analyzer.query(date_range_query)
+
+        try:
+            date_range_data = json.loads(date_range_result)
+        except:
+            date_range_data = []
+
+        # Check if we have team-specific date range request
+        if team_name and start_date and end_date:
+            # Construct team query with wildcards to catch variations of the team name
+            team_query = f"""
+            SELECT
+                date,
+                home_team,
+                away_team,
+                home_score,
+                away_score,
+                league
+            FROM input_data
+            WHERE
+                (home_team LIKE '%{team_name}%' OR away_team LIKE '%{team_name}%')
+                AND date BETWEEN '{start_date}' AND '{end_date}'
+            ORDER BY date;
+            """
+
+            team_result = analyzer.query(team_query)
+
+            try:
+                team_matches = json.loads(team_result)
+            except:
+                team_matches = []
+
+            # Construct the response
+            response = {
+                "dataset_range": date_range_data[0] if date_range_data and len(date_range_data) > 0 else {"earliest_date": "unknown", "latest_date": "unknown"},
+                "matches_found": len(team_matches),
+                "matches": team_matches[:10] if team_matches else [],  # Limit to first 10 matches
+                "has_more_matches": len(team_matches) > 10 if team_matches else False
+            }
+
+            return {"result": json.dumps(response)}
+        else:
+            # Just return the overall date range
+            return {"result": json.dumps({"dataset_range": date_range_data[0] if date_range_data and len(date_range_data) > 0 else {"earliest_date": "unknown", "latest_date": "unknown"}})}
+
+    except Exception as e:
+        import traceback
+        return {"error": f"{str(e)}\n{traceback.format_exc()}"}
+
 # Create a mapping of tool names to their implementation functions
 def get_tool_mapping() -> Dict:
     """
@@ -353,4 +443,5 @@ def get_tool_mapping() -> Dict:
         "complete_task": complete_task,
         "build_dataset": tool_build_dataset,
         "compact_dataset": tool_compact_dataset,
+        "check_date_range": tool_check_date_range
     }
