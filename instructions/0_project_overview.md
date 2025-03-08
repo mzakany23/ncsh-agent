@@ -4,6 +4,19 @@
 
 The NC Soccer Agent is an agentic system built on Claude that provides data analysis for soccer match data. It's designed to serve as a flexible, tool-based framework that leverages Claude's capabilities to understand natural language queries, translate them to appropriate database operations, and present results in a human-friendly format.
 
+## Technology Stack
+
+The project uses the following technologies:
+
+- **Python 3.11+**: Core programming language
+- **DuckDB**: In-memory analytical database for efficient data processing
+- **LlamaIndex**: Framework for connecting custom data to LLMs
+- **Anthropic Claude**: Large language model for natural language processing
+- **Streamlit**: Frontend for interactive web applications
+- **Docker & Docker Compose**: Containerization and orchestration
+- **AWS**: Cloud deployment platform
+- **UV**: Modern Python packaging and dependency management tool
+
 ## Core Philosophy
 
 This project follows several key principles:
@@ -21,7 +34,7 @@ This project follows several key principles:
 ## Getting Started
 
 1. Install dependencies using `uv install`
-2. Run the smoke test to verify the setup: `uv run smoke_test.py`
+2. Run an example to verify the setup: `python -m examples`
 3. Use the CLI tool to interact with the agent: `uv run cli.py query "How did Key West perform in February 2025?"`
 
 ## Project Structure
@@ -33,7 +46,25 @@ This project follows several key principles:
   - `datasets.py`: Dataset management operations
   - `tools/`: Tool implementations for Claude
 - `cli.py`: Command-line interface
-- `smoke_test.py`: Quick functionality validation
+- `examples/`: Test and example scripts
+  - `__init__.py`: Base testing framework and package entry point
+  - `1_basic.py`: Basic demonstration of the agent
+  - `2_future_dates.py`: Tests for handling future date queries
+  - Additional examples follow the pattern: `N_example_name.py`
+
+## Examples Framework
+
+The project includes a flexible testing and example framework:
+
+- Run an example: `python -m examples`
+- Select a specific example: `python -m examples --example=future_dates`
+- Run with a custom query: `python -m examples "How did Key West perform in January 2025?"`
+
+This framework provides consistent testing capabilities with:
+- Standardized query processing
+- Response quality evaluation
+- Performance metrics tracking
+- Test summary reporting
 
 ## Documentation
 

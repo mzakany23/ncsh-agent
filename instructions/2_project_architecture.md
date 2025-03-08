@@ -8,6 +8,44 @@
 - **Loose coupling**: Minimize dependencies between modules
 - **No business logic in UI layers**: UI components should only handle presentation, not business logic
 
+## Technology Implementation
+
+### Database Layer
+- **DuckDB**: Used as the primary analytical engine
+  - In-memory processing for performance
+  - SQL queries for data analysis
+  - Supports Parquet file format for efficient data storage
+  - Centralized in `analysis/database.py`
+
+### LLM Integration
+- **Anthropic Claude**: Core LLM for understanding queries and generating responses
+  - Connected via Anthropic API
+  - Tool-calling capabilities utilized for agentic behavior
+  - Managed through `analysis/agent.py`
+
+### Data Integration
+- **LlamaIndex**: Used to bridge data and LLM
+  - Facilitates tool definition and execution
+  - Enables structured passing of data to and from Claude
+  - Configured in `analysis/tools/claude_tools.py`
+
+### User Interface
+- **Streamlit**: Web interface for interactive analysis
+  - Connects to core agent functionality
+  - Provides visualization capabilities for analysis results
+  - Thin layer over core business logic
+
+### Deployment
+- **Docker & Docker Compose**: Containerization for consistent environments
+  - Multi-stage build for efficient images
+  - Compose for local development and testing
+  - Images deployable to AWS
+
+- **AWS**: Production deployment target
+  - Container services for running the application
+  - S3 for data storage
+  - Other AWS services as needed
+
 ## Module Structure
 
 Our project follows a modular architecture with the following key components:
@@ -41,6 +79,24 @@ Our project follows a modular architecture with the following key components:
    - Implements adapters for tool functions
    - Maps tool definitions to their implementations
 
+### Examples and Testing Framework
+
+1. **`examples/__init__.py`**
+   - Contains the base testing framework as `BaseSmokeTest` class
+   - Provides common functionality for all examples
+   - Serves as the package entry point
+   - Includes the main run function for CLI execution
+
+2. **`examples/N_example_name.py`**
+   - Numbered example files (e.g., `1_basic.py`, `2_future_dates.py`)
+   - Each file focuses on testing a specific aspect or scenario
+   - Extends the base testing framework
+   - Includes default test queries for its focus area
+
+3. **`examples/__main__.py`**
+   - Makes the examples package directly executable
+   - Delegates to the main run function in `__init__.py`
+
 ### Interface Layers
 
 1. **`cli.py`**
@@ -69,11 +125,17 @@ Our project follows a modular architecture with the following key components:
    - Higher-level modules (CLI, web interfaces) depend on core modules
    - Core modules should not depend on interface modules
    - Circular dependencies should be avoided
+   - Examples should only depend on core modules, not interface layers
 
 4. **Organized imports**
    - Only import what you need
    - Use explicit imports rather than wildcard imports
    - Group imports by standard library, third-party, and local modules
+
+5. **Example naming and organization**
+   - Use numeric prefixes for examples (N_example_name.py)
+   - Base testing code goes in `__init__.py` (not prefixed)
+   - Each example should focus on a specific testing scenario or case
 
 ## Example: Proper Separation of Concerns
 
