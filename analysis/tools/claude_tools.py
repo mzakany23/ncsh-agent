@@ -613,6 +613,37 @@ def get_claude_tools() -> List[Dict]:
             },
         },
         {
+            "name": "create_llm_dataset",
+            "description": "Create a dataset optimized for LLM context based on SQL query or team filter",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Explain why this dataset is needed for the analysis",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "SQL query to filter the data (if not using team filter)",
+                    },
+                    "team": {
+                        "type": "string",
+                        "description": "Team name to filter by (alternative to query)",
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format (compact, table, simple)",
+                        "enum": ["compact", "table", "simple"],
+                    },
+                    "parquet_file": {
+                        "type": "string",
+                        "description": "Path to the source parquet file",
+                    },
+                },
+                "required": ["reasoning", "parquet_file"],
+            },
+        },
+        {
             "name": "compact_dataset",
             "description": "Create a compact representation of match data optimized for Claude's context window",
             "input_schema": {
@@ -1254,6 +1285,15 @@ def tool_fuzzy_match_teams(tool_input: Dict) -> Dict:
     parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
     return fuzzy_match_teams(query, team_candidates, parquet_file)
 
+def tool_create_llm_dataset(tool_input: Dict) -> Dict:
+    """Adapter for create_llm_dataset function."""
+    reasoning = tool_input.get("reasoning", "")
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    query = tool_input.get("query", None)
+    team = tool_input.get("team", None)
+    format = tool_input.get("format", "compact")
+    return create_llm_dataset(reasoning, parquet_file, query, team, format)
+
 # Create a mapping of tool names to their implementation functions
 def get_tool_mapping() -> Dict:
     """
@@ -1277,6 +1317,7 @@ def get_tool_mapping() -> Dict:
         "create_analysis_pipeline": tool_create_analysis_pipeline,
         "select_tool": tool_select_tool,
         "fuzzy_match_teams": tool_fuzzy_match_teams,
+        "create_llm_dataset": tool_create_llm_dataset,
     }
 
 def create_analysis_pipeline(query: str, parquet_file: str) -> Dict:
@@ -2220,3 +2261,135 @@ def select_tool(query: str) -> Dict:
     except Exception as e:
         console.log(f"[select_tool] Error: {str(e)}")
         return {"error": str(e)}
+
+def create_llm_dataset(reasoning: str, parquet_file: str, query: str = None, team: str = None,
+                  format: str = "compact") -> Dict:
+    """
+    Create a dataset optimized for LLM context based on SQL query or team filter.
+
+    This function abstracts away the implementation details and creates a dataset
+    in the most efficient format for LLM context. It can either use a SQL query
+    or filter by team name.
+
+    Args:
+        reasoning: Explanation of why this dataset is needed
+        parquet_file: Path to the source parquet file
+        query: SQL query to filter the data (optional)
+        team: Team name to filter by (optional, alternative to query)
+        format: Output format (compact, table, simple)
+
+    Returns:
+        Dictionary with the LLM-optimized dataset
+    """
+    try:
+        console.log(f"[create_llm_dataset] Creating LLM dataset with format: {format}")
+
+        # Initialize analyzer
+        from analysis.database import DuckDBAnalyzer
+        analyzer = DuckDBAnalyzer(parquet_file)
+
+        # If team is provided, create a team-specific query
+        if team and not query:
+            query = f"""
+            SELECT
+                date,
+                league,
+                home_team,
+                away_team,
+                home_score,
+                away_score,
+                CASE
+                    WHEN home_team LIKE '%{team}%' AND home_score > away_score THEN 'win'
+                    WHEN away_team LIKE '%{team}%' AND away_score > home_score THEN 'win'
+                    WHEN home_score = away_score AND home_score IS NOT NULL THEN 'draw'
+                    WHEN home_score IS NULL OR away_score IS NULL THEN 'Not Played'
+                    ELSE 'loss'
+                END as result
+            FROM input_data
+            WHERE home_team LIKE '%{team}%' OR away_team LIKE '%{team}%'
+            ORDER BY date DESC
+            """
+            console.log(f"[create_llm_dataset] Generated team query for {team}")
+
+        # Execute query if provided
+        if query:
+            result = analyzer.execute_query(query)
+            if not result["success"]:
+                return {"error": result["error"]}
+
+            if result["row_count"] == 0:
+                return {"error": "No data found for the specified criteria"}
+
+            # Get the dataframe - fix the key access issue
+            if "result" in result:
+                df = result["result"]
+            else:
+                # If there's no 'result' key but we have data, try to access it directly
+                df = result.get("data", pd.DataFrame())
+                if df.empty and result["row_count"] > 0:
+                    # As a fallback, execute a more direct query using DuckDB connection
+                    try:
+                        df = analyzer.conn.execute(query).fetchdf()
+                    except Exception as e:
+                        return {"error": f"Failed to retrieve data: {str(e)}"}
+
+            # Format the data based on requested format
+            if format == "compact":
+                # Create a compact representation with one match per line
+                lines = []
+
+                for _, row in df.iterrows():
+                    date_str = row['date'].strftime("%Y-%m-%d") if pd.notna(row['date']) else "Unknown"
+                    league = row['league'] if 'league' in row and pd.notna(row['league']) else "Unknown"
+
+                    match_line = f"{date_str} | {league} | {row['home_team']} {row['home_score']}-{row['away_score']} {row['away_team']}"
+
+                    if 'result' in row:
+                        match_line += f" | {row['result'].upper()}"
+
+                    lines.append(match_line)
+
+                formatted_data = "\n".join(lines)
+                data_type = "compact_text"
+
+            elif format == "table":
+                # Create a markdown table
+                header = "| Date | League | Home Team | Away Team | Score | Result |\n"
+                header += "|------|--------|-----------|----------|-------|--------|\n"
+
+                rows = []
+                for _, row in df.iterrows():
+                    date_str = row['date'].strftime("%Y-%m-%d") if pd.notna(row['date']) else "Unknown"
+                    league = row['league'] if 'league' in row and pd.notna(row['league']) else "Unknown"
+                    result = row['result'].upper() if 'result' in row and pd.notna(row['result']) else ""
+
+                    table_row = f"| {date_str} | {league} | {row['home_team']} | {row['away_team']} | {row['home_score']}-{row['away_score']} | {result} |"
+                    rows.append(table_row)
+
+                formatted_data = header + "\n".join(rows)
+                data_type = "markdown_table"
+
+            else:  # simple format
+                # Use the pandas to_string method for a simple representation
+                formatted_data = df.to_string(index=False)
+                data_type = "text_table"
+
+            # Return the formatted data
+            return {
+                "success": True,
+                "reasoning": reasoning,
+                "row_count": result["row_count"],
+                "data": formatted_data,
+                "data_type": data_type,
+                "format": format,
+                "team": team if team else None,
+                "query": query
+            }
+
+        else:
+            return {"error": "Either team or query parameter must be provided"}
+
+    except Exception as e:
+        error_message = f"Error creating LLM dataset: {str(e)}\n{traceback.format_exc()}"
+        console.print(f"[red]{error_message}[/red]")
+        return {"error": error_message}
