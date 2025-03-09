@@ -19,6 +19,7 @@ from datetime import datetime
 import time
 import uuid
 import glob
+from urllib.parse import urlencode
 
 # Add parent directory to path to find modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -218,13 +219,112 @@ class StreamlitChatMemory:
             self.dataset_context
         )
 
-# Configure the page
+# Initialize session state for tracking URL query params
+if "query_params" not in st.session_state:
+    st.session_state.query_params = {}
+
+# Function to get the current URL query parameters
+def get_query_params():
+    # Get query parameters from URL
+    query_params = st.experimental_get_query_params()
+    return query_params
+
+# Function to update URL with current conversation
+def set_conversation_in_url(conversation_id):
+    # Update the URL with the current conversation ID
+    if conversation_id:
+        st.experimental_set_query_params(conversation=conversation_id)
+    else:
+        # Clear the conversation parameter if None
+        st.experimental_set_query_params()
+
+# Function to load a conversation based on query parameters
+def load_conversation_from_url():
+    query_params = get_query_params()
+    conversation_id = query_params.get("conversation", [None])[0]
+
+    if conversation_id:
+        logger.info(f"Loading conversation from URL query parameter: {conversation_id}")
+        if st.session_state.memory.load_conversation(conversation_id):
+            # Update the messages for display
+            st.session_state.messages = st.session_state.memory.get_messages()
+
+            # Check if there's a dataset context and update the selected dataset
+            if st.session_state.memory.get_dataset_context():
+                dataset_context = st.session_state.memory.get_dataset_context()
+                # Extract team name from context for potential SQL queries
+                team_name = None
+                context_lines = dataset_context.split('\n')
+                for line in context_lines:
+                    if line.startswith('# ') and 'Team Dataset' in line:
+                        team_name = line.replace('# ', '').replace(' Team Dataset', '').strip()
+                        break
+                if team_name:
+                    st.session_state.team_name = team_name
+                    st.session_state.selected_dataset = team_name
+                else:
+                    st.session_state.team_name = None
+            else:
+                st.session_state.selected_dataset = None
+
+            logger.info(f"Successfully loaded conversation from URL: {st.session_state.memory.conversation_title}")
+            return True
+        else:
+            logger.error(f"Failed to load conversation from URL with ID: {conversation_id}")
+            # If conversation doesn't exist, clear the URL parameter
+            st.experimental_set_query_params()
+            return False
+    return False
+
+# Initialize page configuration
 st.set_page_config(
     page_title="NC Soccer Match Analysis",
     page_icon="⚽",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize memory in session state if it doesn't exist
+if 'memory' not in st.session_state:
+    st.session_state.memory = StreamlitChatMemory()
+    # We'll wait to assign a conversation ID until we check URL params
+
+# Initialize message history in session state if it doesn't exist
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# Initialize selected dataset in session state if it doesn't exist
+if 'selected_dataset' not in st.session_state:
+    st.session_state.selected_dataset = None
+
+# Initialize conversation list in session state
+if 'conversations' not in st.session_state:
+    st.session_state.conversations = list_conversations()
+
+# Check URL parameters for conversation ID and load if present
+if not st.session_state.memory.conversation_id:
+    # First try to load from URL
+    url_loading_success = load_conversation_from_url()
+
+    # If no conversation in URL or loading failed, load most recent conversation
+    if not url_loading_success:
+        conversations = list_conversations()
+        if conversations:
+            # Load the most recent conversation
+            most_recent_id = conversations[0]["id"]
+            logger.info(f"Loading most recent conversation: {most_recent_id}")
+            if st.session_state.memory.load_conversation(most_recent_id):
+                st.session_state.messages = st.session_state.memory.get_messages()
+                # Update URL with the conversation ID
+                set_conversation_in_url(most_recent_id)
+            else:
+                # If loading fails, create a new conversation
+                st.session_state.memory.new_conversation()
+                set_conversation_in_url(st.session_state.memory.conversation_id)
+        else:
+            # No previous conversations, create a new one
+            st.session_state.memory.new_conversation()
+            set_conversation_in_url(st.session_state.memory.conversation_id)
 
 # Streamlit UI components
 st.title("⚽ NC Soccer Match Analysis")
@@ -302,24 +402,6 @@ if 'default_parquet_path' not in st.session_state:
 # Initialize parquet_file in session state to use the default
 if 'parquet_file' not in st.session_state:
     st.session_state.parquet_file = default_parquet_path
-
-# Initialize memory in session state if it doesn't exist
-if 'memory' not in st.session_state:
-    st.session_state.memory = StreamlitChatMemory()
-    # Start with a new conversation ID
-    st.session_state.memory.new_conversation()
-
-# Initialize message history in session state if it doesn't exist
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-
-# Initialize selected dataset in session state if it doesn't exist
-if 'selected_dataset' not in st.session_state:
-    st.session_state.selected_dataset = None
-
-# Initialize conversation list in session state
-if 'conversations' not in st.session_state:
-    st.session_state.conversations = list_conversations()
 
 # Function to determine if a question requires statistical analysis beyond the loaded context
 def requires_deep_analysis(question, dataset_context):
@@ -743,121 +825,8 @@ The dataset contains {len(df)} matches for {display_name}.
 st.sidebar.markdown("---")
 st.sidebar.title("💬 Conversation Management")
 
-# Conversation actions
-conversation_action = st.sidebar.radio(
-    "Conversation Action",
-    ["Continue Current", "Start New", "Load Previous"],
-    horizontal=True
-)
-
-if conversation_action == "Start New":
-    if st.sidebar.button("Start New Conversation"):
-        # Create a new conversation
-        st.session_state.memory.new_conversation()
-        st.session_state.messages = []
-        st.session_state.selected_dataset = None
-        # Clear dataset context
-        st.session_state.memory.set_dataset_context(None)
-        st.session_state.conversations = list_conversations()
-        st.sidebar.success("New conversation started!")
-        # Rerun to refresh the UI
-        st.rerun()
-
-elif conversation_action == "Load Previous":
-    # Get list of conversations
-    conversations = list_conversations()
-
-    if not conversations:
-        st.sidebar.info("No previous conversations found.")
-    else:
-        # Add a search filter
-        search_term = st.sidebar.text_input("Filter Conversations",
-                                           placeholder="Type to filter by title...")
-
-        # Filter conversations based on search term
-        if search_term:
-            filtered_conversations = [c for c in conversations
-                                    if search_term.lower() in c["title"].lower()]
-        else:
-            filtered_conversations = conversations
-
-        if not filtered_conversations:
-            st.sidebar.info("No conversations match your filter.")
-        else:
-            # Format the conversation options for the selectbox
-            conversation_options = []
-            for conv in filtered_conversations:
-                # Format the date for display
-                try:
-                    last_updated = datetime.fromisoformat(conv["last_updated"]).strftime("%m/%d/%Y %I:%M %p")
-                except:
-                    last_updated = "Unknown date"
-
-                # Add message count to display
-                msg_count = conv.get("message_count", 0)
-                msg_text = f"{msg_count} message{'s' if msg_count != 1 else ''}"
-
-                # Create a display string with title, date and message count
-                display_text = f"{conv['title']} ({last_updated}) - {msg_text}"
-                conversation_options.append({"id": conv["id"], "display": display_text})
-
-            # Create the selectbox for conversations
-            selected_conversation_index = st.sidebar.selectbox(
-                "Select Conversation",
-                range(len(conversation_options)),
-                format_func=lambda i: conversation_options[i]["display"]
-            )
-
-            selected_conversation_id = conversation_options[selected_conversation_index]["id"]
-
-            # Create two columns for the load and delete buttons
-            col1, col2 = st.sidebar.columns(2)
-
-            with col1:
-                if st.button("Load Selected", use_container_width=True):
-                    # Load the selected conversation
-                    if st.session_state.memory.load_conversation(selected_conversation_id):
-                        # Update the messages for display
-                        st.session_state.messages = st.session_state.memory.get_messages()
-
-                        # Check if there's a dataset context and update the selected dataset
-                        if st.session_state.memory.get_dataset_context():
-                            dataset_context = st.session_state.memory.get_dataset_context()
-                            # Extract team name from context for potential SQL queries
-                            team_name = None
-                            context_lines = dataset_context.split('\n')
-                            for line in context_lines:
-                                if line.startswith('# ') and 'Team Dataset' in line:
-                                    team_name = line.replace('# ', '').replace(' Team Dataset', '').strip()
-                                    break
-                            if team_name:
-                                st.session_state.team_name = team_name
-                                st.session_state.selected_dataset = team_name
-                            else:
-                                st.session_state.team_name = None
-                        else:
-                            st.session_state.selected_dataset = None
-
-                        st.sidebar.success(f"Loaded conversation: {st.session_state.memory.conversation_title}")
-                        # Rerun to refresh the UI
-                        st.rerun()
-                    else:
-                        st.sidebar.error("Failed to load conversation.")
-
-            with col2:
-                if st.button("Delete", use_container_width=True):
-                    if st.sidebar.checkbox("Confirm deletion"):
-                        # Delete the conversation file
-                        conversations_dir = get_conversations_dir()
-                        filename = os.path.join(conversations_dir, f"{selected_conversation_id}.json")
-                        try:
-                            os.remove(filename)
-                            st.sidebar.success("Conversation deleted")
-                            # Refresh the conversation list
-                            st.session_state.conversations = list_conversations()
-                            st.rerun()
-                        except Exception as e:
-                            st.sidebar.error(f"Error deleting conversation: {e}")
+# Get the current list of conversations
+conversations = list_conversations()
 
 # Display current conversation info
 if st.session_state.memory.conversation_id:
@@ -865,6 +834,125 @@ if st.session_state.memory.conversation_id:
     msg_count = len(st.session_state.memory.get_messages())
     st.sidebar.markdown(f"**Current Conversation**: {st.session_state.memory.conversation_title}")
     st.sidebar.markdown(f"Messages: {msg_count}")
+
+# Add selectbox for all conversations
+if conversations:
+    # Format the conversation options for the selectbox
+    conversation_options = []
+    for conv in conversations:
+        # Format the date for display
+        try:
+            last_updated = datetime.fromisoformat(conv["last_updated"]).strftime("%m/%d/%Y %I:%M %p")
+        except:
+            last_updated = "Unknown date"
+
+        # Add message count to display
+        msg_count = conv.get("message_count", 0)
+        msg_text = f"{msg_count} message{'s' if msg_count != 1 else ''}"
+
+        # Create a display string with title, date and message count
+        display_text = f"{conv['title']} ({last_updated}) - {msg_text}"
+        conversation_options.append({"id": conv["id"], "display": display_text})
+
+    # Find the current conversation in the list for default selection
+    current_index = 0
+    for i, conv in enumerate(conversation_options):
+        if conv["id"] == st.session_state.memory.conversation_id:
+            current_index = i
+            break
+
+    # Create the selectbox for conversations
+    selected_conversation_index = st.sidebar.selectbox(
+        "Select Conversation",
+        range(len(conversation_options)),
+        format_func=lambda i: conversation_options[i]["display"],
+        index=current_index
+    )
+
+    selected_conversation_id = conversation_options[selected_conversation_index]["id"]
+
+    # Only show the load button if a different conversation is selected
+    if selected_conversation_id != st.session_state.memory.conversation_id:
+        if st.sidebar.button("Switch to Selected Conversation"):
+            # Load the selected conversation
+            if st.session_state.memory.load_conversation(selected_conversation_id):
+                # Update the messages for display
+                st.session_state.messages = st.session_state.memory.get_messages()
+
+                # Check if there's a dataset context and update the selected dataset
+                if st.session_state.memory.get_dataset_context():
+                    dataset_context = st.session_state.memory.get_dataset_context()
+                    # Extract team name from context for potential SQL queries
+                    team_name = None
+                    context_lines = dataset_context.split('\n')
+                    for line in context_lines:
+                        if line.startswith('# ') and 'Team Dataset' in line:
+                            team_name = line.replace('# ', '').replace(' Team Dataset', '').strip()
+                            break
+                    if team_name:
+                        st.session_state.team_name = team_name
+                        st.session_state.selected_dataset = team_name
+                    else:
+                        st.session_state.team_name = None
+                else:
+                    st.session_state.selected_dataset = None
+
+                # Update URL with new conversation ID
+                set_conversation_in_url(selected_conversation_id)
+
+                st.sidebar.success(f"Switched to: {st.session_state.memory.conversation_title}")
+                # Rerun to refresh the UI
+                st.rerun()
+            else:
+                st.sidebar.error("Failed to load conversation.")
+
+# Create two columns for conversation actions
+col1, col2 = st.sidebar.columns(2)
+
+with col1:
+    if st.button("New Conversation", use_container_width=True):
+        # Create a new conversation
+        new_id = st.session_state.memory.new_conversation()
+        st.session_state.messages = []
+        st.session_state.selected_dataset = None
+        # Clear dataset context
+        st.session_state.memory.set_dataset_context(None)
+        # Update URL with new conversation ID
+        set_conversation_in_url(new_id)
+        st.session_state.conversations = list_conversations()
+        st.sidebar.success("New conversation started!")
+        # Rerun to refresh the UI
+        st.rerun()
+
+with col2:
+    if st.session_state.memory.conversation_id and st.button("Delete Current", use_container_width=True):
+        if st.sidebar.checkbox("Confirm deletion"):
+            # Delete the conversation file
+            conversations_dir = get_conversations_dir()
+            filename = os.path.join(conversations_dir, f"{st.session_state.memory.conversation_id}.json")
+            try:
+                current_id = st.session_state.memory.conversation_id
+                os.remove(filename)
+                # Find another conversation to load or create new
+                other_conversations = [c for c in conversations if c["id"] != current_id]
+                if other_conversations:
+                    # Load another conversation
+                    next_id = other_conversations[0]["id"]
+                    st.session_state.memory.load_conversation(next_id)
+                    st.session_state.messages = st.session_state.memory.get_messages()
+                    set_conversation_in_url(next_id)
+                else:
+                    # Create a new conversation
+                    new_id = st.session_state.memory.new_conversation()
+                    st.session_state.messages = []
+                    set_conversation_in_url(new_id)
+
+                st.sidebar.success("Conversation deleted")
+                # Refresh the conversation list
+                st.session_state.conversations = list_conversations()
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Error deleting conversation: {e}")
 
 # Button to rename the current conversation
 if st.session_state.memory.conversation_id and len(st.session_state.messages) > 0:
@@ -876,6 +964,7 @@ if st.session_state.memory.conversation_id and len(st.session_state.messages) > 
             st.sidebar.success("Conversation renamed!")
             # Update conversation list
             st.session_state.conversations = list_conversations()
+            st.rerun()
 
 # Button to save the current conversation manually
 if st.session_state.memory.conversation_id and len(st.session_state.messages) > 0:
@@ -1026,6 +1115,9 @@ if question := st.chat_input("Ask a question about the match data..."):
         st.session_state.memory.save_conversation()
         # Update the conversation list
         st.session_state.conversations = list_conversations()
+
+        # Update URL with the conversation ID (in case this is a new conversation)
+        set_conversation_in_url(st.session_state.memory.conversation_id)
 
     with st.chat_message("user"):
         st.markdown(question)
@@ -1283,8 +1375,9 @@ if question := st.chat_input("Ask a question about the match data..."):
 
                     # Save the conversation
                     st.session_state.memory.save_conversation()
-                    # Update conversation list
+                    # Update conversation list and URL
                     st.session_state.conversations = list_conversations()
+                    set_conversation_in_url(st.session_state.memory.conversation_id)
 
             except Exception as e:
                 # Log detailed error for troubleshooting
