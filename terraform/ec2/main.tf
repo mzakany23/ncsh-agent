@@ -48,7 +48,7 @@ resource "aws_security_group" "streamlit_sg" {
 
 # EC2 Instance
 resource "aws_instance" "streamlit_server" {
-  ami                    = "ami-0c55b159cbfafe1f0"  # Amazon Linux 2 AMI (update with latest)
+  ami                    = "ami-09dc1ba68d413c979"  # Latest Amazon Linux 2 AMI for us-east-2
   instance_type          = "t2.micro"  # Free tier eligible
   key_name               = var.key_name  # Create this in AWS first
   vpc_security_group_ids = [aws_security_group.streamlit_sg.id]
@@ -103,12 +103,25 @@ resource "aws_instance" "streamlit_server" {
     WantedBy=multi-user.target
     STREAMLITSERVICE
 
+    # Create directory structure first
     mkdir -p /home/ec2-user/streamlit-app
     chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
+
+    # Clone the application code from GitHub
+    git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/temp-app
+    cp -R /home/ec2-user/temp-app/* /home/ec2-user/streamlit-app/
+    rm -rf /home/ec2-user/temp-app
+
+    # Install Python dependencies
+    pip3 install -r /home/ec2-user/streamlit-app/requirements.txt
 
     # Ensure Nginx can start after reboot
     systemctl enable nginx
     systemctl start nginx
+
+    # Enable and start the Streamlit service
+    systemctl enable streamlit
+    systemctl start streamlit
 
     # Disable SELinux if it's preventing connections
     setenforce 0 || true
