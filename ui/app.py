@@ -336,17 +336,8 @@ st.markdown("""
 # Sidebar for configuration
 st.sidebar.title("⚙️ Configuration")
 
-# Input for Anthropic API key
-api_key = st.sidebar.text_input(
-    "Anthropic API Key",
-    value=os.environ.get("ANTHROPIC_API_KEY", ""),
-    type="password",
-    help="Enter your Anthropic API key to enable Claude 3.7."
-)
-
-# Set the API key as an environment variable
-if api_key:
-    os.environ["ANTHROPIC_API_KEY"] = api_key
+# Input for Anthropic API key - REMOVED
+# API key will be set via environment variable as documented in README
 
 # Input for parquet file path
 # Forcefully set known working path in Docker
