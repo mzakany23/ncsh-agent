@@ -120,15 +120,17 @@ for path in default_paths:
 # Use the first valid path found
 if valid_paths:
     default_parquet_path = valid_paths[0]
-    logger.info(f"Using parquet file at: {default_parquet_path}")
+    logger.info(f"Using default parquet file at: {default_parquet_path}")
 else:
     logger.error("No valid parquet file paths found!")
 
-parquet_file = st.sidebar.text_input(
-    "Parquet File Path",
-    value=default_parquet_path,
-    help="Path to the parquet file containing match data."
-)
+# Store default parquet path in session state for reference
+if 'default_parquet_path' not in st.session_state:
+    st.session_state.default_parquet_path = default_parquet_path
+
+# Initialize parquet_file in session state to use the default
+if 'parquet_file' not in st.session_state:
+    st.session_state.parquet_file = default_parquet_path
 
 # Initialize chat memory
 class StreamlitChatMemory:
@@ -172,40 +174,302 @@ if 'messages' not in st.session_state:
 if 'selected_dataset' not in st.session_state:
     st.session_state.selected_dataset = None
 
+# Function to determine if a question requires statistical analysis beyond the loaded context
+def requires_deep_analysis(question, dataset_context):
+    """
+    Determines if a question requires deep statistical analysis that would benefit from SQL queries
+    rather than using the limited dataset context.
+
+    When a dataset is loaded, we want to prioritize using that dataset first for most questions,
+    and only switch to deep analysis for questions that clearly require data beyond what's in the dataset.
+    """
+    # Convert question to lowercase for easier matching
+    question_lower = question.lower()
+
+    # If the question is specifically asking about the loaded dataset, never use deep analysis
+    dataset_reference_terms = [
+        "this dataset", "the dataset", "these matches", "these games", "this data",
+        "the data", "loaded dataset", "the information here", "what's shown", "what is shown",
+        "from this"
+    ]
+    if any(term in question_lower for term in dataset_reference_terms):
+        return False
+
+    # Keywords that suggest statistical analysis across ALL matches (beyond the loaded dataset)
+    global_statistical_terms = [
+        "all time", "ever", "all matches", "all games", "every match", "every game",
+        "career", "history", "historically", "overall", "across all",
+        "league-wide", "season total", "compared to all"
+    ]
+
+    # Check if question contains global statistical terms
+    has_global_term = any(term in question_lower for term in global_statistical_terms)
+
+    # Keywords that suggest comparative analysis beyond what's in this dataset
+    comparative_terms = [
+        "compared to", "versus", "vs", "against all", "relative to",
+        "better than", "worse than", "rank among", "ranking among", "compared with",
+        "league average", "other teams", "all other", "everyone else"
+    ]
+
+    # Check if question contains comparative terms that might require broader context
+    has_comparative_term = any(term in question_lower for term in comparative_terms)
+
+    # If dataset context includes enough matches (like full season data), we don't need deep analysis for most questions
+    has_comprehensive_data = False
+    has_limited_sample = False
+    if dataset_context:
+        # Check how many matches are in the dataset
+        match_count_pattern = r'Total matches: (\d+)'
+        match_count_match = re.search(match_count_pattern, dataset_context)
+        if match_count_match:
+            match_count = int(match_count_match.group(1))
+            # If the dataset has a significant number of matches, it's probably adequate for most questions
+            if match_count > 20:
+                has_comprehensive_data = True
+            else:
+                has_limited_sample = True
+
+        # Also check if only showing a sample
+        sample_indicator = "Sample Data (first 20 matches)"
+        if sample_indicator in dataset_context:
+            has_limited_sample = True
+
+    # Basic statistical terms that can usually be answered from the loaded dataset if it's comprehensive
+    basic_stat_terms = [
+        "most", "least", "biggest", "smallest", "highest", "lowest",
+        "best", "worst", "average", "mean", "total", "count"
+    ]
+
+    # If the question uses basic statistical terms but not global or comparative terms,
+    # and we have comprehensive data, try to answer from the dataset
+    has_basic_stat_term = any(term in question_lower for term in basic_stat_terms)
+
+    # Only use deep analysis if:
+    # 1. The question has global/comparative terms suggesting data beyond this dataset, OR
+    # 2. The question has statistical terms AND the dataset is just a limited sample
+    return (has_global_term or has_comparative_term or
+            (has_basic_stat_term and has_limited_sample and not has_comprehensive_data))
+
 # Function to find available datasets
 def find_datasets():
     datasets = []
+    # Add the default dataset first
+    default_dataset_name = "Main Dataset (default)"
+
     # Check the ui/data directory
     ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
     if os.path.exists(ui_data_dir):
         for file in os.listdir(ui_data_dir):
             if file.endswith('.parquet'):
-                datasets.append(os.path.join(ui_data_dir, file))
+                datasets.append((os.path.join(ui_data_dir, file), file))
 
     # Check the analysis/data directory
     analysis_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis', 'data')
     if os.path.exists(analysis_data_dir):
         for file in os.listdir(analysis_data_dir):
-            if file.endswith('.parquet') and file != 'data.parquet':  # Exclude the main data file
-                datasets.append(os.path.join(analysis_data_dir, file))
+            if file.endswith('.parquet'):
+                # Include the main data file but mark it as the default
+                if file == 'data.parquet':
+                    datasets.append((os.path.join(analysis_data_dir, file), default_dataset_name))
+                else:
+                    datasets.append((os.path.join(analysis_data_dir, file), file))
 
     # Check for datasets in the current directory
     for file in os.listdir('.'):
-        if file.endswith('.parquet') and file != 'data.parquet':  # Exclude the main data file
-            datasets.append(file)
+        if file.endswith('.parquet'):
+            # Include the main data file but mark it as the default
+            if file == 'data.parquet':
+                datasets.append((file, default_dataset_name))
+            else:
+                datasets.append((file, file))
 
     return datasets
 
 # Function to create a dataset using create_llm_dataset
-def create_dataset(team, format="table"):
+def create_dataset(instructions, format="table"):
     try:
         from analysis.tools.claude_tools import create_llm_dataset
+        from analysis.tools.claude_tools import fuzzy_match_teams
 
-        # Generate the dataset
+        # Parse the instructions to extract team name and time period
+        # Use Claude to help with entity extraction
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return None, "ANTHROPIC_API_KEY environment variable is not set."
+
+        client = anthropic.Anthropic(api_key=api_key)
+
+        # Get Claude to extract entities from the instructions
+        extraction_response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=200,
+            system="""
+            You are an expert at extracting structured information from text instructions.
+            Extract the team name and time period (if any) from the instructions.
+            Respond in JSON format with keys 'team' and 'time_period'.
+            For example:
+            Input: "Create a 2025 Key West dataset"
+            Output: {"team": "Key West", "time_period": "2025"}
+
+            Input: "Internazionale matches in January"
+            Output: {"team": "Internazionale", "time_period": "January"}
+
+            If no time period is specified, use null for that field.
+            If no team is specified, use null for that field.
+            """,
+            messages=[
+                {"role": "user", "content": [{"type": "text", "text": instructions}]}
+            ]
+        )
+
+        # Parse the extraction result
+        extraction_text = extraction_response.content[0].text
+
+        # Try to extract JSON from the response
+        import re
+        import json
+        json_match = re.search(r'(\{.*\})', extraction_text, re.DOTALL)
+
+        if json_match:
+            try:
+                extracted_data = json.loads(json_match.group(1))
+                team = extracted_data.get('team')
+                time_period = extracted_data.get('time_period')
+            except:
+                # If JSON parsing fails, use simple extraction
+                team = None
+                time_period = None
+                if "team" in extraction_text and ":" in extraction_text:
+                    team_match = re.search(r'"team"\s*:\s*"([^"]+)"', extraction_text)
+                    if team_match:
+                        team = team_match.group(1)
+                if "time_period" in extraction_text and ":" in extraction_text:
+                    time_match = re.search(r'"time_period"\s*:\s*"([^"]+)"', extraction_text)
+                    if time_match:
+                        time_period = time_match.group(1)
+        else:
+            # Fallback to treating the entire instruction as a team name
+            team = instructions
+            time_period = None
+
+        if not team:
+            return None, "Could not extract team name from instructions"
+
+        # Get the default parquet file from session state
+        source_parquet_file = st.session_state.default_parquet_path
+
+        # Use fuzzy matching to get the exact team name from the database
+        match_result = fuzzy_match_teams(team, parquet_file=source_parquet_file)
+        if "error" in match_result:
+            return None, match_result["error"]
+
+        if match_result.get("matches"):
+            # Use the highest confidence match
+            team = match_result["matches"][0]["team_name"]
+            logger.info(f"Fuzzy matched team name: {team}")
+
+        # Create a descriptive dataset name for display and file naming
+        dataset_name = team.replace(' ', '_').lower()
+        if time_period:
+            time_slug = time_period.replace(' ', '_').lower()
+            # Put year first if it's a year for better sorting
+            if time_period.isdigit() and len(time_period) == 4:
+                dataset_name = f"{time_slug}_{dataset_name}"
+            else:
+                dataset_name += f"_{time_slug}"
+
+        # Store the dataset name in session state
+        st.session_state.dataset_name = f"{team}{' ' + time_period if time_period else ''}"
+
+        # Construct SQL query with time period filter if provided
+        query = None
+        if time_period:
+            # Map common time period descriptions to SQL expressions
+            time_filters = {
+                "january": "date_part('month', date) = 1",
+                "february": "date_part('month', date) = 2",
+                "march": "date_part('month', date) = 3",
+                "april": "date_part('month', date) = 4",
+                "may": "date_part('month', date) = 5",
+                "june": "date_part('month', date) = 6",
+                "july": "date_part('month', date) = 7",
+                "august": "date_part('month', date) = 8",
+                "september": "date_part('month', date) = 9",
+                "october": "date_part('month', date) = 10",
+                "november": "date_part('month', date) = 11",
+                "december": "date_part('month', date) = 12",
+                "2024": "date_part('year', date) = 2024",
+                "2025": "date_part('year', date) = 2025",
+            }
+
+            # Try to match the time period to our predefined filters
+            time_period_lower = time_period.lower()
+            time_filter = None
+
+            for key, filter_expr in time_filters.items():
+                if key in time_period_lower:
+                    time_filter = filter_expr
+                    break
+
+            # If we found a matching filter, create a query with time period constraint
+            if time_filter:
+                query = f"""
+                SELECT
+                    date,
+                    league,
+                    home_team,
+                    away_team,
+                    home_score,
+                    away_score,
+                    CASE
+                        WHEN home_team LIKE '%{team}%' AND home_score > away_score THEN 'win'
+                        WHEN away_team LIKE '%{team}%' AND away_score > home_score THEN 'win'
+                        WHEN home_score = away_score AND home_score IS NOT NULL THEN 'draw'
+                        WHEN home_score IS NULL OR away_score IS NULL THEN 'Not Played'
+                        ELSE 'loss'
+                    END as result
+                FROM input_data
+                WHERE (home_team LIKE '%{team}%' OR away_team LIKE '%{team}%')
+                AND {time_filter}
+                ORDER BY date DESC
+                """
+                logger.info(f"Created query with time filter: {time_filter}")
+
+        # Define output file path
+        ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        os.makedirs(ui_data_dir, exist_ok=True)
+        output_file = os.path.join(ui_data_dir, f"{dataset_name}_dataset.parquet")
+
+        # First, use the database module to build a persistent dataset file
+        from analysis.database import build_dataset
+
+        # Create a SQL query that gets all matches for the team
+        sql_query = query if query else f"""
+        SELECT *
+        FROM input_data
+        WHERE
+            home_team LIKE '%{team}%' OR
+            away_team LIKE '%{team}%'
+        ORDER BY date
+        """
+
+        logger.info(f"Creating dataset file at: {output_file}")
+
+        # Execute the build_dataset function that saves the parquet file
+        build_result = build_dataset(team, source_parquet_file, output_file, custom_query=sql_query)
+
+        if "error" in build_result:
+            return None, build_result["error"]
+
+        logger.info(f"Successfully saved dataset to {output_file} with {build_result.get('row_count', 0)} rows")
+
+        # Generate the in-memory dataset for context using create_llm_dataset
         result = create_llm_dataset(
-            reasoning=f"Creating a dataset for {team} to use in LLM context for chat",
-            parquet_file=parquet_file,
+            reasoning=f"Creating a dataset for {team}{' during ' + time_period if time_period else ''} to use in LLM context for chat",
+            parquet_file=source_parquet_file,
             team=team,
+            query=query,  # Pass the custom query if we have one
             format=format
         )
 
@@ -213,15 +477,17 @@ def create_dataset(team, format="table"):
             return None, result["error"]
 
         # Save the formatted data to the context
+        time_info = f" ({time_period})" if time_period else ""
         dataset_context = f"""
-# {team} Team Dataset
+# {team}{time_info} Team Dataset
 
 {result.get('data', '')}
 
 ## Summary
 - Total matches: {result.get('row_count', 'Unknown')}
 - Dataset generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Team name: {team}
+- Team name: {team}{time_info if time_period else ''}
+- Dataset file: {os.path.basename(output_file)}
         """
 
         return dataset_context, None
@@ -284,52 +550,78 @@ st.sidebar.title("🗃️ Dataset Management")
 
 # Dataset creation section
 st.sidebar.subheader("Create New Dataset")
-team_name = st.sidebar.text_input("Team Name", value="", help="Enter a team name to create a dataset")
+dataset_instructions = st.sidebar.text_input("Instructions", value="", help="Enter instructions like 'Create a 2025 Key West dataset' or 'Internazionale matches in January'")
 format_options = ["table", "compact", "simple"]
 selected_format = st.sidebar.selectbox("Format", format_options, help="Select the format for the dataset")
 
 if st.sidebar.button("Create Dataset"):
-    if team_name:
+    if dataset_instructions:
         with st.sidebar.status("Creating dataset..."):
-            dataset_context, error = create_dataset(team_name, selected_format)
+            # Use the default parquet file as the source for creating datasets
+            dataset_context, error = create_dataset(dataset_instructions, selected_format)
             if error:
                 st.sidebar.error(f"Error creating dataset: {error}")
             else:
                 st.session_state.memory.set_dataset_context(dataset_context)
-                st.session_state.selected_dataset = f"{team_name} (In-Memory)"
-                st.sidebar.success(f"Dataset for {team_name} created successfully")
+                dataset_name = getattr(st.session_state, 'dataset_name', 'Custom Dataset')
+                st.session_state.selected_dataset = f"{dataset_name} (In-Memory)"
+                # Update the active parquet file
+                st.session_state.parquet_file = st.session_state.default_parquet_path
+                st.sidebar.success(f"Dataset '{dataset_name}' created successfully")
     else:
-        st.sidebar.warning("Please enter a team name")
+        st.sidebar.warning("Please enter dataset instructions")
 
 # Dataset selection section
-st.sidebar.subheader("Select Existing Dataset")
+st.sidebar.subheader("Select Dataset")
 datasets = find_datasets()
-dataset_options = ["None"] + [os.path.basename(d) for d in datasets]
-selected_dataset_name = st.sidebar.selectbox("Available Datasets", dataset_options, help="Select a dataset to load into context")
+dataset_paths = [path for path, name in datasets]
+dataset_names = [name for path, name in datasets]
+default_index = dataset_names.index("Main Dataset (default)") if "Main Dataset (default)" in dataset_names else 0
 
-if selected_dataset_name != "None" and selected_dataset_name != st.session_state.selected_dataset:
-    with st.sidebar.status(f"Loading dataset {selected_dataset_name}..."):
-        # Find the full path of the selected dataset
-        selected_dataset_path = next((d for d in datasets if os.path.basename(d) == selected_dataset_name), None)
-        if selected_dataset_path:
-            dataset_context, error = load_dataset_file(selected_dataset_path)
-            if error:
-                st.sidebar.error(f"Error loading dataset: {error}")
-            else:
-                st.session_state.memory.set_dataset_context(dataset_context)
-                st.session_state.selected_dataset = selected_dataset_name
-                st.sidebar.success(f"Dataset {selected_dataset_name} loaded successfully")
+selected_dataset_index = st.sidebar.selectbox(
+    "Available Datasets",
+    range(len(dataset_names)),
+    format_func=lambda i: dataset_names[i],
+    index=default_index,
+    help="Select a dataset to use for analysis"
+)
 
-# Show the currently selected dataset
+# When a dataset is selected, update the parquet_file path
+if len(datasets) > 0:
+    selected_dataset_path = dataset_paths[selected_dataset_index]
+    selected_dataset_name = dataset_names[selected_dataset_index]
+
+    # Only update if the selection has changed
+    if selected_dataset_path != st.session_state.parquet_file:
+        st.session_state.parquet_file = selected_dataset_path
+        # Clear dataset context if switching to main dataset
+        if selected_dataset_name == "Main Dataset (default)":
+            st.session_state.memory.set_dataset_context(None)
+            st.session_state.selected_dataset = None
+            st.sidebar.success(f"Switched to main dataset")
+        else:
+            # Load the dataset context for custom datasets
+            with st.sidebar.status(f"Loading dataset {selected_dataset_name}..."):
+                dataset_context, error = load_dataset_file(selected_dataset_path)
+                if error:
+                    st.sidebar.error(f"Error loading dataset: {error}")
+                else:
+                    st.session_state.memory.set_dataset_context(dataset_context)
+                    st.session_state.selected_dataset = selected_dataset_name
+                    st.sidebar.success(f"Dataset {selected_dataset_name} loaded successfully")
+
+# Show the currently active dataset
 if st.session_state.selected_dataset:
     st.sidebar.info(f"Active Dataset: {st.session_state.selected_dataset}")
-else:
-    st.sidebar.info("No dataset selected")
+elif selected_dataset_name == "Main Dataset (default)":
+    st.sidebar.info("Using: Main Dataset (default)")
 
 # Button to clear the selected dataset
 if st.sidebar.button("Clear Selected Dataset"):
     st.session_state.memory.set_dataset_context(None)
     st.session_state.selected_dataset = None
+    # Revert to default parquet file
+    st.session_state.parquet_file = st.session_state.default_parquet_path
     st.sidebar.success("Dataset selection cleared")
 
 # Button to clear chat history
@@ -377,8 +669,8 @@ if question := st.chat_input("Ask a question about the match data..."):
         with st.spinner("Analyzing data..."):
             try:
                 # Check if parquet file exists
-                if not os.path.exists(parquet_file):
-                    message_placeholder.error(f"Error: Parquet file {parquet_file} does not exist.")
+                if not os.path.exists(st.session_state.parquet_file):
+                    message_placeholder.error(f"Error: Parquet file {st.session_state.parquet_file} does not exist.")
                 else:
                     # Get the conversation history as context
                     conversation_history = st.session_state.memory.get_messages_as_string()
@@ -449,7 +741,7 @@ if question := st.chat_input("Ask a question about the match data..."):
                         # Run the agent with the question
                         raw_output = run_agent_once(
                             enriched_question,
-                            parquet_file,
+                            st.session_state.parquet_file,
                             max_tokens=4000,
                             conversation_history=conversation_history
                         )
@@ -634,36 +926,3 @@ st.markdown(
     "💡 **Tip:** For best results with datasets, first select or create a dataset from the sidebar. "
     "Then ask specific questions about the dataset. For general questions, no dataset needs to be selected."
 )
-
-# Function to determine if a question requires statistical analysis beyond the loaded context
-def requires_deep_analysis(question, dataset_context):
-    """
-    Determines if a question requires deep statistical analysis that would benefit from SQL queries
-    rather than using the limited dataset context.
-    """
-    # Convert question to lowercase for easier matching
-    question_lower = question.lower()
-
-    # Keywords that suggest statistical analysis
-    statistical_terms = [
-        "most", "least", "biggest", "smallest", "highest", "lowest",
-        "average", "mean", "median", "maximum", "minimum", "max", "min",
-        "total", "count", "percentage", "ratio", "compare", "comparison",
-        "all time", "ever", "all matches", "statistics", "stats", "record",
-        "ranking", "ranked", "rank", "top", "bottom", "best", "worst"
-    ]
-
-    # Check if question contains statistical terms
-    has_statistical_term = any(term in question_lower for term in statistical_terms)
-
-    # If dataset context includes all matches (unlikely), we don't need deep analysis
-    context_has_all_matches = False
-    if dataset_context:
-        lines = dataset_context.split('\n')
-        for line in lines:
-            if "Sample Data" in line and "(first 20 matches)" in line:
-                context_has_all_matches = False
-                break
-
-    # If the question seems to require comprehensive statistics and context doesn't have all matches
-    return has_statistical_term and not context_has_all_matches
