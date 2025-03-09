@@ -1,21 +1,21 @@
-version: '3.8'
-
 services:
   ui:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ui/Dockerfile
     container_name: ncsoccer-ui
     ports:
-      - "8503:8501"
+      - "8080:80"      # Nginx with authentication
+      - "8503:8501"    # Direct Streamlit access (for debugging)
     volumes:
-      - ..:/app
-      - ./memory:/app/ui/memory
       - ../analysis/data:/app/ui/data
+      - ./memory:/app/ui/memory
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PARQUET_FILE=${PARQUET_FILE:-/app/ui/data/data.parquet}
-      - MEMORY_PATH=/app/memory
+      - MEMORY_PATH=/app/ui/memory
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-ncsoccer}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-password}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
