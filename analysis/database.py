@@ -580,7 +580,7 @@ def compact_dataset(parquet_file: str, output_format: str = "compact") -> Dict[s
         }
 
 
-def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, Any]:
+def build_dataset(team: str, parquet_file: str, output_file: str, custom_query: str = None) -> Dict[str, Any]:
     """
     Create a filtered dataset for a specific team and save it as a new parquet file.
 
@@ -588,6 +588,7 @@ def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, A
         team: Team name to filter by
         parquet_file: Source parquet file path
         output_file: Output parquet file path
+        custom_query: Optional custom SQL query to use instead of the default team filter
 
     Returns:
         Dictionary with result information
@@ -596,15 +597,19 @@ def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, A
         # Initialize analyzer
         analyzer = DuckDBAnalyzer(parquet_file)
 
-        # Create a query that filters for matches involving the team
-        query = f"""
-        SELECT *
-        FROM input_data
-        WHERE
-            home_team LIKE '%{team}%' OR
-            away_team LIKE '%{team}%'
-        ORDER BY date
-        """
+        # Use custom query if provided, otherwise create a default query
+        if custom_query:
+            query = custom_query
+        else:
+            # Create a query that filters for matches involving the team
+            query = f"""
+            SELECT *
+            FROM input_data
+            WHERE
+                home_team LIKE '%{team}%' OR
+                away_team LIKE '%{team}%'
+            ORDER BY date
+            """
 
         # Execute the query
         result = analyzer.execute_query(query)
@@ -619,17 +624,14 @@ def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, A
         # Save the filtered dataset to a new parquet file
         save_query = f"""
         COPY (
-            SELECT *
-            FROM input_data
-            WHERE
-                home_team LIKE '%{team}%' OR
-                away_team LIKE '%{team}%'
-            ORDER BY date
+            {query}
         ) TO '{output_file}' (FORMAT 'parquet')
         """
 
-        analyzer.conn.execute(save_query)
+        # Execute the save query
+        save_result = analyzer.conn.execute(save_query)
 
+        # Return success info
         return {
             "success": True,
             "row_count": result["row_count"],
@@ -638,10 +640,8 @@ def build_dataset(team: str, parquet_file: str, output_file: str) -> Dict[str, A
         }
     except Exception as e:
         error_message = str(e)
-        tb_str = traceback.format_exc()
         console.print(f"[red]Error building dataset: {error_message}[/red]")
-        console.print(f"[red]{tb_str}[/red]")
+        console.print(traceback.format_exc())
         return {
-            "success": False,
             "error": error_message
         }

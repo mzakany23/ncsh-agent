@@ -89,9 +89,18 @@ This feature provides:
 - **Faster Responses**: Without the overhead of running SQL queries each time
 - **Focused Analysis**: Interactions are specifically about the loaded dataset
 - **Simplified Context**: Using a smaller, targeted context window for more efficient processing
-- **Smart Query Routing**: Automatically switches to full SQL queries for statistical questions that require complete dataset analysis
+- **Smart Query Routing**: Intelligently uses the dataset context for most questions, only switching to full SQL queries when necessary for global analysis
 
-The system intelligently detects when a question requires comprehensive statistics (like "biggest win" or "highest scoring match") and will automatically use the full database for those queries while maintaining fast responses for simpler questions.
+The system intelligently determines when a question is about the loaded dataset versus when it requires broader analysis. Questions like "what was the biggest win?" will use the loaded dataset, while questions like "how does this compare to all teams historically?" will use the full database with SQL queries.
+
+### Using Dataset Mode in Streamlit UI
+
+1. In the sidebar, enter dataset instructions like "Create a 2025 Key West dataset" or "Internazionale matches in January"
+2. Click "Create Dataset" to generate an optimized dataset with time period filtering
+3. The dataset will load automatically and be displayed in the chat
+4. Ask questions about the dataset: "How many games did they win?" or "What was their biggest victory?"
+5. For statistical questions, the system will automatically query the full database
+6. For simple questions, you'll get faster responses using the pre-loaded dataset context
 
 ## Project Structure
 
@@ -125,14 +134,6 @@ uv run cli.py query "Show me all matches where Key West FC scored more than 5 go
 ```bash
 uv run cli.py team "Key West FC"
 ```
-
-### Using Dataset Mode in Streamlit UI
-
-1. In the sidebar, enter "Key West FC" in the Team Name field
-2. Click "Create Dataset" to generate an optimized dataset
-3. The dataset will load automatically and be displayed in the chat
-4. Ask questions about Key West FC: "How many games did they win in January?"
-5. The responses will be faster as they use the pre-loaded dataset context
 
 ## Contributing
 
