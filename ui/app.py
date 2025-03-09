@@ -254,35 +254,73 @@ def requires_deep_analysis(question, dataset_context):
 # Function to find available datasets
 def find_datasets():
     datasets = []
+    # Track datasets by filename to avoid duplicates
+    seen_filenames = set()
     # Add the default dataset first
     default_dataset_name = "Main Dataset (default)"
+    default_added = False
 
-    # Check the ui/data directory
+    # Check the ui/data directory first (most likely to have user-created datasets)
     ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
     if os.path.exists(ui_data_dir):
         for file in os.listdir(ui_data_dir):
             if file.endswith('.parquet'):
-                datasets.append((os.path.join(ui_data_dir, file), file))
+                filename = os.path.basename(file)
+                # Skip if we've already seen this filename
+                if filename in seen_filenames:
+                    continue
+
+                # Handle the main dataset specially
+                if filename == 'data.parquet' and not default_added:
+                    datasets.append((os.path.join(ui_data_dir, file), default_dataset_name))
+                    default_added = True
+                else:
+                    datasets.append((os.path.join(ui_data_dir, file), filename))
+                seen_filenames.add(filename)
 
     # Check the analysis/data directory
     analysis_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis', 'data')
     if os.path.exists(analysis_data_dir):
         for file in os.listdir(analysis_data_dir):
             if file.endswith('.parquet'):
+                filename = os.path.basename(file)
+                # Skip if we've already seen this filename
+                if filename in seen_filenames:
+                    continue
+
                 # Include the main data file but mark it as the default
-                if file == 'data.parquet':
+                if filename == 'data.parquet' and not default_added:
                     datasets.append((os.path.join(analysis_data_dir, file), default_dataset_name))
+                    default_added = True
                 else:
-                    datasets.append((os.path.join(analysis_data_dir, file), file))
+                    datasets.append((os.path.join(analysis_data_dir, file), filename))
+                seen_filenames.add(filename)
 
     # Check for datasets in the current directory
     for file in os.listdir('.'):
         if file.endswith('.parquet'):
+            filename = os.path.basename(file)
+            # Skip if we've already seen this filename
+            if filename in seen_filenames:
+                continue
+
             # Include the main data file but mark it as the default
-            if file == 'data.parquet':
+            if filename == 'data.parquet' and not default_added:
                 datasets.append((file, default_dataset_name))
+                default_added = True
             else:
-                datasets.append((file, file))
+                datasets.append((file, filename))
+            seen_filenames.add(filename)
+
+    # Sort datasets to ensure consistent order (default first, then alphabetical)
+    datasets.sort(key=lambda x: "" if x[1] == default_dataset_name else x[1])
+
+    # If we found the default dataset, move it to the front of the list
+    for i, (path, name) in enumerate(datasets):
+        if name == default_dataset_name:
+            datasets.pop(i)
+            datasets.insert(0, (path, name))
+            break
 
     return datasets
 
@@ -505,7 +543,17 @@ def load_dataset_file(dataset_path):
         df = pd.read_parquet(dataset_path)
 
         # Convert to a readable format
-        team_name = os.path.basename(dataset_path).replace('_dataset.parquet', '').replace('_', ' ').title()
+        filename = os.path.basename(dataset_path)
+        # Make a nice display name from the filename
+        if filename.endswith('_dataset.parquet'):
+            display_name = filename.replace('_dataset.parquet', '').replace('_', ' ').title()
+            # Handle year prefixes specially (e.g., "2025_key_west" -> "Key West (2025)")
+            year_match = re.match(r'(\d{4})_(.*)', display_name)
+            if year_match:
+                year, team = year_match.groups()
+                display_name = f"{team} ({year})"
+        else:
+            display_name = filename.replace('.parquet', '').replace('_', ' ').title()
 
         # Create a nicely formatted markdown table
         if len(df) > 0:
@@ -523,9 +571,9 @@ def load_dataset_file(dataset_path):
             table = f"{table_header}\n{table_separator}\n" + '\n'.join(table_rows)
 
             dataset_context = f"""
-# {team_name} Team Dataset
+# {display_name} Team Dataset
 
-The dataset contains {len(df)} matches for {team_name}.
+The dataset contains {len(df)} matches for {display_name}.
 
 ## Sample Data (first 20 matches)
 {table}
@@ -574,20 +622,38 @@ if st.sidebar.button("Create Dataset"):
 # Dataset selection section
 st.sidebar.subheader("Select Dataset")
 datasets = find_datasets()
-dataset_paths = [path for path, name in datasets]
-dataset_names = [name for path, name in datasets]
-default_index = dataset_names.index("Main Dataset (default)") if "Main Dataset (default)" in dataset_names else 0
 
-selected_dataset_index = st.sidebar.selectbox(
-    "Available Datasets",
-    range(len(dataset_names)),
-    format_func=lambda i: dataset_names[i],
-    index=default_index,
-    help="Select a dataset to use for analysis"
-)
+if datasets:
+    dataset_paths = [path for path, name in datasets]
+    dataset_names = [name for path, name in datasets]
 
-# When a dataset is selected, update the parquet_file path
-if len(datasets) > 0:
+    # Get a clean list of display names for the dropdown
+    display_names = []
+    for path, name in datasets:
+        # For custom datasets, clean up the filename for display
+        if name != "Main Dataset (default)":
+            # Strip off _dataset.parquet and make it more readable
+            display_name = name.replace('_dataset.parquet', '').replace('_', ' ').title()
+            # Handle year prefixes specially (e.g., "2025_key_west" -> "Key West (2025)")
+            year_match = re.match(r'(\d{4})_(.*)', display_name)
+            if year_match:
+                year, team = year_match.groups()
+                display_name = f"{team} ({year})"
+            display_names.append(display_name)
+        else:
+            display_names.append(name)
+
+    default_index = 0  # Default to the first item (should be Main Dataset)
+
+    selected_dataset_index = st.sidebar.selectbox(
+        "Available Datasets",
+        range(len(dataset_names)),
+        format_func=lambda i: display_names[i],
+        index=default_index,
+        help="Select a dataset to use for analysis"
+    )
+
+    # When a dataset is selected, update the parquet_file path
     selected_dataset_path = dataset_paths[selected_dataset_index]
     selected_dataset_name = dataset_names[selected_dataset_index]
 
@@ -601,14 +667,16 @@ if len(datasets) > 0:
             st.sidebar.success(f"Switched to main dataset")
         else:
             # Load the dataset context for custom datasets
-            with st.sidebar.status(f"Loading dataset {selected_dataset_name}..."):
+            with st.sidebar.status(f"Loading dataset {display_names[selected_dataset_index]}..."):
                 dataset_context, error = load_dataset_file(selected_dataset_path)
                 if error:
                     st.sidebar.error(f"Error loading dataset: {error}")
                 else:
                     st.session_state.memory.set_dataset_context(dataset_context)
-                    st.session_state.selected_dataset = selected_dataset_name
-                    st.sidebar.success(f"Dataset {selected_dataset_name} loaded successfully")
+                    st.session_state.selected_dataset = display_names[selected_dataset_index]
+                    st.sidebar.success(f"Dataset {display_names[selected_dataset_index]} loaded successfully")
+else:
+    st.sidebar.info("No datasets found. Create one using the instructions above.")
 
 # Show the currently active dataset
 if st.session_state.selected_dataset:
