@@ -8,6 +8,22 @@ This directory contains the Terraform configuration to deploy the NC Soccer Huds
 2. Terraform installed (version >= 1.0.0)
 3. An SSH key pair created in AWS (default name: `ncsoccer-key`)
 
+## Deployment Architecture
+
+The deployment includes:
+
+1. **EC2 Instance**: Amazon Linux 2 with t2.micro instance type (free tier eligible)
+2. **Security Group**: Allows incoming traffic on ports 80 (HTTP), 443 (HTTPS), and 22 (SSH)
+3. **Software Stack**:
+   - Docker for containerization
+   - Nginx as a reverse proxy with basic authentication
+   - Application deployed as a Docker container
+
+This architecture ensures compatibility across different environments by:
+- Using Docker to encapsulate the application and its dependencies
+- Ensuring Python version compatibility (Python 3.11 in the container)
+- Simplifying installation of complex dependencies
+
 ## Deployment Steps
 
 ### 1. Create `terraform.tfvars` file
@@ -50,17 +66,6 @@ Your application will be accessible at the provided URL with basic authenticatio
 - Username: `ncsoccer`
 - Password: The value you set for `basic_auth_password` in your `terraform.tfvars` file
 
-## Architecture
-
-The deployment includes:
-
-1. **EC2 Instance**: Amazon Linux 2 with t2.micro instance type (free tier eligible)
-2. **Security Group**: Allows incoming traffic on ports 80 (HTTP), 443 (HTTPS), and 22 (SSH)
-3. **Software Stack**:
-   - Nginx as a reverse proxy with basic authentication
-   - Python 3 with Streamlit for the application
-   - Application code from the GitHub repository
-
 ## Troubleshooting
 
 If you encounter issues with the deployment, you can SSH into the instance:
@@ -76,21 +81,38 @@ Common troubleshooting steps:
    sudo systemctl status nginx
    ```
 
-2. Check Streamlit service status:
+2. Check Docker container status:
    ```bash
-   sudo systemctl status streamlit
+   sudo docker ps -a
    ```
 
-3. Start Streamlit manually if the service fails:
+3. View Docker container logs:
    ```bash
-   ~/start_streamlit.sh
+   sudo docker logs ncsoccer-ui
    ```
 
-4. Check logs:
+4. Check Nginx logs:
    ```bash
    sudo journalctl -u nginx
-   sudo journalctl -u streamlit
-   cat /tmp/streamlit.log
+   ```
+
+5. Restart the Docker container:
+   ```bash
+   sudo docker restart ncsoccer-ui
+   ```
+
+6. Rebuild and restart the container if needed:
+   ```bash
+   cd /home/ec2-user/streamlit-app
+   sudo docker build -t ncsoccer-ui -f ui/Dockerfile .
+   sudo docker stop ncsoccer-ui
+   sudo docker rm ncsoccer-ui
+   sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+     -p 8501:8501 \
+     -e ANTHROPIC_API_KEY="your-api-key" \
+     -e BASIC_AUTH_USERNAME=ncsoccer \
+     -e BASIC_AUTH_PASSWORD="your-password" \
+     ncsoccer-ui
    ```
 
 ## Customization
@@ -99,7 +121,7 @@ You can modify the following aspects of the deployment:
 
 1. **Instance Type**: Change the `instance_type` parameter in `main.tf` if you need more resources.
 2. **Region**: Modify the AWS region in the provider block in `main.tf`.
-3. **Basic Auth Username**: Change the username in the htpasswd command in the user_data script.
+3. **Basic Auth Username**: Change the username in the htpasswd command and Docker run command.
 
 ## Cleanup
 

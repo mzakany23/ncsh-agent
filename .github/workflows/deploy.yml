@@ -134,15 +134,21 @@ jobs:
             sudo rsync -av --delete /home/ec2-user/streamlit-app.tmp/ /home/ec2-user/streamlit-app/
             sudo chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
 
-            # Install dependencies
+            # Stop and remove existing Docker container if it exists
+            sudo docker stop ncsoccer-ui || true
+            sudo docker rm ncsoccer-ui || true
+
+            # Build and run Docker container
             cd /home/ec2-user/streamlit-app
-            pip3 install -r requirements.txt
+            sudo docker build -t ncsoccer-ui -f ui/Dockerfile .
+            sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+              -p 8501:8501 \
+              -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+              -e BASIC_AUTH_USERNAME=ncsoccer \
+              -e BASIC_AUTH_PASSWORD="${{ secrets.BASIC_AUTH_PASSWORD }}" \
+              ncsoccer-ui
 
-            # Restart the Streamlit service
-            sudo systemctl restart streamlit
-            sudo systemctl enable streamlit
-
-            # Reload Nginx
+            # Ensure Nginx is running
             sudo systemctl reload nginx
 
             # Clean up

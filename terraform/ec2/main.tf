@@ -64,15 +64,15 @@ resource "aws_instance" "streamlit_server" {
     echo "Updating system packages..."
     yum update -y
 
-    # Install Nginx, Python, and other dependencies
-    echo "Installing Nginx and Python..."
-    amazon-linux-extras install -y nginx1 python3
-    yum install -y python3-pip git httpd-tools
-    pip3 install --upgrade pip
+    # Install Docker and dependencies
+    echo "Installing Docker..."
+    amazon-linux-extras install -y docker
+    yum install -y git httpd-tools
 
-    # Install Streamlit and required Python packages - use local user to avoid permission issues
-    echo "Installing Python packages..."
-    sudo -u ec2-user pip3 install --user streamlit pandas pytest numpy
+    # Start and enable Docker
+    echo "Starting Docker service..."
+    systemctl start docker
+    systemctl enable docker
 
     # Create application directories
     echo "Setting up application directories..."
@@ -81,13 +81,12 @@ resource "aws_instance" "streamlit_server" {
 
     # Clone the application code from GitHub
     echo "Cloning application code..."
-    git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/temp-app
-    cp -R /home/ec2-user/temp-app/* /home/ec2-user/streamlit-app/
-    rm -rf /home/ec2-user/temp-app
+    git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/streamlit-app
     chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
 
     # Configure Nginx with Basic Auth
     echo "Configuring Nginx with Basic Auth..."
+    amazon-linux-extras install -y nginx1
     cat > /etc/nginx/conf.d/streamlit.conf << 'NGINXCONF'
     server {
         listen 80 default_server;
@@ -115,50 +114,21 @@ resource "aws_instance" "streamlit_server" {
     echo "Creating basic auth credentials..."
     htpasswd -bc /etc/nginx/.htpasswd ncsoccer "${var.basic_auth_password}"
 
-    # Configure Streamlit as a systemd service
-    echo "Creating Streamlit service..."
-    cat > /etc/systemd/system/streamlit.service << STREAMLITSERVICE
-[Unit]
-Description=NC Soccer Hudson - Match Analysis Agent
-After=network.target
-
-[Service]
-User=ec2-user
-WorkingDirectory=/home/ec2-user/streamlit-app/ui
-ExecStart=/home/ec2-user/.local/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0
-Restart=always
-Environment="ANTHROPIC_API_KEY=${var.anthropic_api_key}"
-
-[Install]
-WantedBy=multi-user.target
-STREAMLITSERVICE
+    # Build and run Docker container
+    echo "Building and running Docker container..."
+    cd /home/ec2-user/streamlit-app
+    docker build -t ncsoccer-ui -f ui/Dockerfile .
+    docker run -d --name ncsoccer-ui --restart unless-stopped \
+      -p 8501:8501 \
+      -e ANTHROPIC_API_KEY="${var.anthropic_api_key}" \
+      -e BASIC_AUTH_USERNAME=ncsoccer \
+      -e BASIC_AUTH_PASSWORD="${var.basic_auth_password}" \
+      ncsoccer-ui
 
     # Start and enable Nginx
     echo "Starting Nginx..."
     systemctl enable nginx
     systemctl start nginx
-
-    # Create a fallback script for manual Streamlit start (in case systemd service fails)
-    echo "Creating fallback start script..."
-    cat > /home/ec2-user/start_streamlit.sh << 'STARTSCRIPT'
-#!/bin/bash
-cd /home/ec2-user/streamlit-app/ui
-nohup ~/.local/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0 > /tmp/streamlit.log 2>&1 &
-STARTSCRIPT
-    chmod +x /home/ec2-user/start_streamlit.sh
-    chown ec2-user:ec2-user /home/ec2-user/start_streamlit.sh
-
-    # Start Streamlit service
-    echo "Starting Streamlit service..."
-    systemctl daemon-reload
-    systemctl enable streamlit
-    systemctl start streamlit || echo "Streamlit service failed to start, fallback script available at /home/ec2-user/start_streamlit.sh"
-
-    # If Streamlit service fails, run it with the fallback approach
-    if ! systemctl is-active --quiet streamlit; then
-      echo "Streamlit service failed to start, using fallback method..."
-      sudo -u ec2-user /home/ec2-user/start_streamlit.sh
-    fi
 
     # Disable SELinux to avoid permission issues
     echo "Configuring SELinux..."
