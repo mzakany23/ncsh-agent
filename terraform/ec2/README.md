@@ -56,10 +56,6 @@ anthropic_api_key = "your-anthropic-api-key-here"
 domain_name = "example.com"
 create_new_domain = false  # Set to true if you want Terraform to create the Route 53 zone
 admin_email = "admin@example.com"
-
-# S3 data configuration
-s3_data_bucket = "your-data-bucket-name"
-s3_data_path = "data"  # Path within the bucket
 ```
 
 ### 2. Initialize Terraform
@@ -180,8 +176,6 @@ Common troubleshooting steps:
      -e ANTHROPIC_API_KEY="your-api-key" \
      -e BASIC_AUTH_USERNAME=ncsoccer \
      -e BASIC_AUTH_PASSWORD="your-password" \
-     -e S3_DATA_BUCKET="your-bucket" \
-     -e S3_DATA_PATH="data" \
      ncsoccer-ui
    ```
 

@@ -258,8 +258,6 @@ resource "aws_instance" "streamlit_server" {
       -e ANTHROPIC_API_KEY="${var.anthropic_api_key}" \
       -e BASIC_AUTH_USERNAME=ncsoccer \
       -e BASIC_AUTH_PASSWORD="${var.basic_auth_password}" \
-      -e S3_DATA_BUCKET="${var.s3_data_bucket}" \
-      -e S3_DATA_PATH="${var.s3_data_path}" \
       ncsoccer-ui
 
     # Start and enable Nginx
