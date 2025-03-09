@@ -49,6 +49,175 @@ if project_root not in sys.path:
 # Import the run_agent function from the analysis package
 from cli import run_agent
 
+# Define utility functions for conversation management
+def get_conversations_dir():
+    """Get the directory where conversations are stored."""
+    ui_dir = os.path.dirname(os.path.abspath(__file__))
+    conversations_dir = os.path.join(ui_dir, "conversations")
+    os.makedirs(conversations_dir, exist_ok=True)
+    return conversations_dir
+
+def save_conversation(conversation_id, title, messages, dataset_context=None):
+    """Save a conversation to disk."""
+    conversations_dir = get_conversations_dir()
+
+    # Create a unique filename based on the conversation ID
+    filename = os.path.join(conversations_dir, f"{conversation_id}.json")
+
+    # Format the conversation data
+    conversation_data = {
+        "id": conversation_id,
+        "title": title,
+        "messages": messages,
+        "dataset_context": dataset_context,
+        "last_updated": datetime.now().isoformat(),
+        "created_at": datetime.now().isoformat() if not os.path.exists(filename) else None
+    }
+
+    # Save to disk
+    with open(filename, "w") as f:
+        json.dump(conversation_data, f, indent=2)
+
+    logger.info(f"Saved conversation {conversation_id} to {filename}")
+    return filename
+
+def load_conversation(conversation_id):
+    """Load a conversation from disk."""
+    conversations_dir = get_conversations_dir()
+    filename = os.path.join(conversations_dir, f"{conversation_id}.json")
+
+    if not os.path.exists(filename):
+        logger.error(f"Conversation file {filename} not found")
+        return None
+
+    try:
+        with open(filename, "r") as f:
+            conversation_data = json.load(f)
+
+        # Update the last accessed time
+        conversation_data["last_accessed"] = datetime.now().isoformat()
+        with open(filename, "w") as f:
+            json.dump(conversation_data, f, indent=2)
+
+        logger.info(f"Loaded conversation {conversation_id} from {filename}")
+        return conversation_data
+    except Exception as e:
+        logger.error(f"Error loading conversation {conversation_id}: {e}")
+        return None
+
+def list_conversations():
+    """List all saved conversations, sorted by last updated time (newest first)."""
+    conversations_dir = get_conversations_dir()
+    conversation_files = glob.glob(os.path.join(conversations_dir, "*.json"))
+
+    conversations = []
+    for filename in conversation_files:
+        try:
+            with open(filename, "r") as f:
+                conversation_data = json.load(f)
+
+            # Extract the basic information
+            conversations.append({
+                "id": conversation_data.get("id", os.path.basename(filename).replace(".json", "")),
+                "title": conversation_data.get("title", "Untitled Conversation"),
+                "last_updated": conversation_data.get("last_updated", ""),
+                "created_at": conversation_data.get("created_at", ""),
+                "message_count": len(conversation_data.get("messages", [])),
+                "has_dataset": conversation_data.get("dataset_context") is not None
+            })
+        except Exception as e:
+            logger.error(f"Error reading conversation file {filename}: {e}")
+
+    # Sort by last updated time (newest first)
+    conversations.sort(key=lambda x: x["last_updated"], reverse=True)
+    return conversations
+
+def generate_conversation_title(messages, max_length=40):
+    """Generate a title for a conversation based on its content."""
+    if not messages:
+        return "New Conversation"
+
+    # Use the first user message as the title basis
+    for msg in messages:
+        if msg["role"] == "user":
+            title = msg["content"]
+            # Truncate and add ellipsis if too long
+            if len(title) > max_length:
+                title = title[:max_length] + "..."
+            return title
+
+    return "New Conversation"
+
+# Initialize chat memory class -- MOVED EARLIER so it's defined before use
+class StreamlitChatMemory:
+    def __init__(self):
+        self.memory = []
+        self.dataset_context = None
+        self.conversation_id = None
+        self.conversation_title = "New Conversation"
+
+    def add_message(self, role, content):
+        self.memory.append({"role": role, "content": content})
+        # Auto-save after each message if we have a conversation ID
+        if self.conversation_id:
+            self.save_conversation()
+
+    def get_messages(self):
+        return self.memory
+
+    def get_messages_as_string(self):
+        result = ""
+        for msg in self.memory:
+            # Format the message in a way that's cleaner for the agent to process
+            role_name = "User" if msg["role"] == "user" else "Assistant"
+            result += f"{role_name}: {msg['content']}\n\n"
+        return result
+
+    def set_dataset_context(self, context):
+        self.dataset_context = context
+
+    def get_dataset_context(self):
+        return self.dataset_context
+
+    def clear(self):
+        self.memory = []
+        self.dataset_context = None
+        # Don't clear conversation_id, we might want to reuse it
+
+    def new_conversation(self):
+        """Start a fresh conversation."""
+        self.clear()
+        self.conversation_id = str(uuid.uuid4())
+        self.conversation_title = "New Conversation"
+        return self.conversation_id
+
+    def load_conversation(self, conversation_id):
+        """Load a conversation from disk."""
+        conversation_data = load_conversation(conversation_id)
+        if conversation_data:
+            self.memory = conversation_data.get("messages", [])
+            self.dataset_context = conversation_data.get("dataset_context")
+            self.conversation_id = conversation_id
+            self.conversation_title = conversation_data.get("title", "Untitled Conversation")
+            return True
+        return False
+
+    def save_conversation(self):
+        """Save the current conversation to disk."""
+        if not self.conversation_id:
+            self.conversation_id = str(uuid.uuid4())
+
+        # Generate a title if needed
+        if self.conversation_title == "New Conversation" and self.memory:
+            self.conversation_title = generate_conversation_title(self.memory)
+
+        return save_conversation(
+            self.conversation_id,
+            self.conversation_title,
+            self.memory,
+            self.dataset_context
+        )
+
 # Configure the page
 st.set_page_config(
     page_title="NC Soccer Match Analysis",
@@ -1130,172 +1299,3 @@ st.markdown(
     "💡 **Tip:** For best results with datasets, first select or create a dataset from the sidebar. "
     "Then ask specific questions about the dataset. For general questions, no dataset needs to be selected."
 )
-
-# Conversation management functions
-def get_conversations_dir():
-    """Get the directory where conversations are stored."""
-    ui_dir = os.path.dirname(os.path.abspath(__file__))
-    conversations_dir = os.path.join(ui_dir, "conversations")
-    os.makedirs(conversations_dir, exist_ok=True)
-    return conversations_dir
-
-def save_conversation(conversation_id, title, messages, dataset_context=None):
-    """Save a conversation to disk."""
-    conversations_dir = get_conversations_dir()
-
-    # Create a unique filename based on the conversation ID
-    filename = os.path.join(conversations_dir, f"{conversation_id}.json")
-
-    # Format the conversation data
-    conversation_data = {
-        "id": conversation_id,
-        "title": title,
-        "messages": messages,
-        "dataset_context": dataset_context,
-        "last_updated": datetime.now().isoformat(),
-        "created_at": datetime.now().isoformat() if not os.path.exists(filename) else None
-    }
-
-    # Save to disk
-    with open(filename, "w") as f:
-        json.dump(conversation_data, f, indent=2)
-
-    logger.info(f"Saved conversation {conversation_id} to {filename}")
-    return filename
-
-def load_conversation(conversation_id):
-    """Load a conversation from disk."""
-    conversations_dir = get_conversations_dir()
-    filename = os.path.join(conversations_dir, f"{conversation_id}.json")
-
-    if not os.path.exists(filename):
-        logger.error(f"Conversation file {filename} not found")
-        return None
-
-    try:
-        with open(filename, "r") as f:
-            conversation_data = json.load(f)
-
-        # Update the last accessed time
-        conversation_data["last_accessed"] = datetime.now().isoformat()
-        with open(filename, "w") as f:
-            json.dump(conversation_data, f, indent=2)
-
-        logger.info(f"Loaded conversation {conversation_id} from {filename}")
-        return conversation_data
-    except Exception as e:
-        logger.error(f"Error loading conversation {conversation_id}: {e}")
-        return None
-
-def list_conversations():
-    """List all saved conversations, sorted by last updated time (newest first)."""
-    conversations_dir = get_conversations_dir()
-    conversation_files = glob.glob(os.path.join(conversations_dir, "*.json"))
-
-    conversations = []
-    for filename in conversation_files:
-        try:
-            with open(filename, "r") as f:
-                conversation_data = json.load(f)
-
-            # Extract the basic information
-            conversations.append({
-                "id": conversation_data.get("id", os.path.basename(filename).replace(".json", "")),
-                "title": conversation_data.get("title", "Untitled Conversation"),
-                "last_updated": conversation_data.get("last_updated", ""),
-                "created_at": conversation_data.get("created_at", ""),
-                "message_count": len(conversation_data.get("messages", [])),
-                "has_dataset": conversation_data.get("dataset_context") is not None
-            })
-        except Exception as e:
-            logger.error(f"Error reading conversation file {filename}: {e}")
-
-    # Sort by last updated time (newest first)
-    conversations.sort(key=lambda x: x["last_updated"], reverse=True)
-    return conversations
-
-def generate_conversation_title(messages, max_length=40):
-    """Generate a title for a conversation based on its content."""
-    if not messages:
-        return "New Conversation"
-
-    # Use the first user message as the title basis
-    for msg in messages:
-        if msg["role"] == "user":
-            title = msg["content"]
-            # Truncate and add ellipsis if too long
-            if len(title) > max_length:
-                title = title[:max_length] + "..."
-            return title
-
-    return "New Conversation"
-
-# Initialize chat memory
-class StreamlitChatMemory:
-    def __init__(self):
-        self.memory = []
-        self.dataset_context = None
-        self.conversation_id = None
-        self.conversation_title = "New Conversation"
-
-    def add_message(self, role, content):
-        self.memory.append({"role": role, "content": content})
-        # Auto-save after each message if we have a conversation ID
-        if self.conversation_id:
-            self.save_conversation()
-
-    def get_messages(self):
-        return self.memory
-
-    def get_messages_as_string(self):
-        result = ""
-        for msg in self.memory:
-            # Format the message in a way that's cleaner for the agent to process
-            role_name = "User" if msg["role"] == "user" else "Assistant"
-            result += f"{role_name}: {msg['content']}\n\n"
-        return result
-
-    def set_dataset_context(self, context):
-        self.dataset_context = context
-
-    def get_dataset_context(self):
-        return self.dataset_context
-
-    def clear(self):
-        self.memory = []
-        self.dataset_context = None
-        # Don't clear conversation_id, we might want to reuse it
-
-    def new_conversation(self):
-        """Start a fresh conversation."""
-        self.clear()
-        self.conversation_id = str(uuid.uuid4())
-        self.conversation_title = "New Conversation"
-        return self.conversation_id
-
-    def load_conversation(self, conversation_id):
-        """Load a conversation from disk."""
-        conversation_data = load_conversation(conversation_id)
-        if conversation_data:
-            self.memory = conversation_data.get("messages", [])
-            self.dataset_context = conversation_data.get("dataset_context")
-            self.conversation_id = conversation_id
-            self.conversation_title = conversation_data.get("title", "Untitled Conversation")
-            return True
-        return False
-
-    def save_conversation(self):
-        """Save the current conversation to disk."""
-        if not self.conversation_id:
-            self.conversation_id = str(uuid.uuid4())
-
-        # Generate a title if needed
-        if self.conversation_title == "New Conversation" and self.memory:
-            self.conversation_title = generate_conversation_title(self.memory)
-
-        return save_conversation(
-            self.conversation_id,
-            self.conversation_title,
-            self.memory,
-            self.dataset_context
-        )
