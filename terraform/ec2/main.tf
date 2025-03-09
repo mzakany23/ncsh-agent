@@ -48,9 +48,9 @@ resource "aws_security_group" "streamlit_sg" {
 
 # EC2 Instance
 resource "aws_instance" "streamlit_server" {
-  ami                    = "ami-09dc1ba68d413c979"  # Latest Amazon Linux 2 AMI for us-east-2
-  instance_type          = "t2.micro"  # Free tier eligible
-  key_name               = var.key_name  # Create this in AWS first
+  ami                    = var.ami_id
+  instance_type          = var.instance_type
+  key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.streamlit_sg.id]
 
   # Install required software via user_data
