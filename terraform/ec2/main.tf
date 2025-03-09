@@ -62,8 +62,9 @@ resource "aws_instance" "streamlit_server" {
     # Configure Nginx with Basic Auth
     cat > /etc/nginx/conf.d/streamlit.conf << 'NGINXCONF'
     server {
-        listen 80;
+        listen 80 default_server;
         server_name _;
+        client_max_body_size 100M;
 
         location / {
             auth_basic "Restricted Access";
@@ -73,6 +74,10 @@ resource "aws_instance" "streamlit_server" {
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400;
             proxy_cache_bypass $http_upgrade;
         }
     }
@@ -90,7 +95,7 @@ resource "aws_instance" "streamlit_server" {
     [Service]
     User=ec2-user
     WorkingDirectory=/home/ec2-user/streamlit-app
-    ExecStart=/usr/bin/python3 -m streamlit run app.py
+    ExecStart=/usr/bin/python3 -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0
     Restart=always
     Environment="ANTHROPIC_API_KEY=${var.anthropic_api_key}"
 
@@ -101,9 +106,20 @@ resource "aws_instance" "streamlit_server" {
     mkdir -p /home/ec2-user/streamlit-app
     chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
 
-    # Start and enable services
+    # Ensure Nginx can start after reboot
     systemctl enable nginx
     systemctl start nginx
+
+    # Disable SELinux if it's preventing connections
+    setenforce 0 || true
+    sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config || true
+
+    # Open firewall ports if firewalld is installed
+    if command -v firewall-cmd &> /dev/null; then
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
+        firewall-cmd --reload
+    fi
   EOF
 
   tags = {
