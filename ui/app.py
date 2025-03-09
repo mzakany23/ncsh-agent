@@ -226,22 +226,22 @@ if "query_params" not in st.session_state:
 # Function to get the current URL query parameters
 def get_query_params():
     # Get query parameters from URL
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params.to_dict()
     return query_params
 
 # Function to update URL with current conversation
 def set_conversation_in_url(conversation_id):
     # Update the URL with the current conversation ID
     if conversation_id:
-        st.experimental_set_query_params(conversation=conversation_id)
+        st.query_params["conversation"] = conversation_id
     else:
         # Clear the conversation parameter if None
-        st.experimental_set_query_params()
+        st.query_params.clear()
 
 # Function to load a conversation based on query parameters
 def load_conversation_from_url():
     query_params = get_query_params()
-    conversation_id = query_params.get("conversation", [None])[0]
+    conversation_id = query_params.get("conversation")
 
     if conversation_id:
         logger.info(f"Loading conversation from URL query parameter: {conversation_id}")
@@ -272,7 +272,7 @@ def load_conversation_from_url():
         else:
             logger.error(f"Failed to load conversation from URL with ID: {conversation_id}")
             # If conversation doesn't exist, clear the URL parameter
-            st.experimental_set_query_params()
+            st.query_params.clear()
             return False
     return False
 
