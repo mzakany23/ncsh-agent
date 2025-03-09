@@ -198,3 +198,32 @@ terraform destroy
 ```
 
 When prompted, type `yes` to confirm the destruction of resources.
+
+# Domain and TLS Configuration (Optional)
+
+The domain name and TLS configuration is now completely optional:
+
+- By default (`enable_domain_and_tls = false`), the application will be deployed with:
+  - Only HTTP (no HTTPS)
+  - No domain name (use the EC2 public IP directly)
+  - Basic authentication still enabled for security
+
+- If you set `enable_domain_and_tls = true`, you must also provide:
+  - `domain_name`: Your registered domain name
+  - `admin_email`: Your email for Let's Encrypt notifications
+  - `create_new_domain`: Whether to create a new Route 53 hosted zone
+
+## Using Without a Domain Name
+
+If you don't have a domain name, you can still deploy the application:
+
+1. In your `terraform.tfvars`, set:
+   ```hcl
+   enable_domain_and_tls = false
+   ```
+
+2. Deploy normally with `terraform apply`
+
+3. Access your application at `http://<public-ip>` with basic authentication:
+   - Username: `ncsoccer`
+   - Password: The value from your `basic_auth_password` variable

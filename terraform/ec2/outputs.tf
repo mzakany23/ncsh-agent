@@ -10,25 +10,25 @@ output "public_dns" {
 
 output "domain" {
   description = "Domain name of the application"
-  value       = var.domain_name
+  value       = var.enable_domain_and_tls ? var.domain_name : null
 }
 
 output "http_url" {
-  description = "HTTP URL to access the application (redirects to HTTPS)"
-  value       = "http://${var.domain_name}"
+  description = "HTTP URL to access the application"
+  value       = "http://${aws_instance.streamlit_server.public_ip}"
 }
 
 output "https_url" {
-  description = "HTTPS URL to access the application"
-  value       = "https://${var.domain_name}"
+  description = "HTTPS URL to access the application (if TLS enabled)"
+  value       = var.enable_domain_and_tls ? "https://${var.domain_name}" : null
 }
 
 output "certificate_arn" {
-  description = "ARN of the ACM certificate"
-  value       = aws_acm_certificate.cert.arn
+  description = "ARN of the ACM certificate (if TLS enabled)"
+  value       = var.enable_domain_and_tls ? aws_acm_certificate.cert[0].arn : null
 }
 
 output "zone_id" {
-  description = "Route 53 zone ID"
-  value       = local.zone_id
+  description = "Route 53 zone ID (if TLS enabled)"
+  value       = var.enable_domain_and_tls ? local.zone_id : null
 }

@@ -28,9 +28,16 @@ variable "ami_id" {
   default     = "ami-09dc1ba68d413c979"  # Amazon Linux 2 in us-east-2 (Ohio)
 }
 
+variable "enable_domain_and_tls" {
+  description = "Whether to enable domain name and TLS features (Route53, ACM, Let's Encrypt)"
+  type        = bool
+  default     = false
+}
+
 variable "domain_name" {
-  description = "Domain name for the application (e.g., example.com)"
+  description = "Domain name for the application (e.g., example.com). Required if enable_domain_and_tls is true."
   type        = string
+  default     = ""
 }
 
 variable "create_new_domain" {
@@ -40,6 +47,7 @@ variable "create_new_domain" {
 }
 
 variable "admin_email" {
-  description = "Email address for Let's Encrypt certificate notifications"
+  description = "Email address for Let's Encrypt certificate notifications. Required if enable_domain_and_tls is true."
   type        = string
+  default     = ""
 }
