@@ -51,3 +51,7 @@ requirements.txt
 analysis/data/
 *.parquet
 ui/data/
+
+# Saved conversations
+ui/conversations/
+*.json
