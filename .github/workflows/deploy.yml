@@ -112,8 +112,6 @@ jobs:
           TF_VAR_key_name: ${{ secrets.AWS_KEY_NAME }}
           TF_VAR_domain_name: ${{ secrets.DOMAIN_NAME }}
           TF_VAR_admin_email: ${{ secrets.ADMIN_EMAIL }}
-          TF_VAR_s3_data_bucket: ${{ secrets.S3_DATA_BUCKET }}
-          TF_VAR_s3_data_path: ${{ secrets.S3_DATA_PATH }}
           TF_VAR_create_new_domain: ${{ secrets.CREATE_NEW_DOMAIN }}
 
       - name: Get EC2 Host
@@ -151,8 +149,9 @@ jobs:
               -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
               -e BASIC_AUTH_USERNAME=ncsoccer \
               -e BASIC_AUTH_PASSWORD="${{ secrets.BASIC_AUTH_PASSWORD }}" \
-              -e S3_DATA_BUCKET="${{ secrets.S3_DATA_BUCKET }}" \
-              -e S3_DATA_PATH="${{ secrets.S3_DATA_PATH }}" \
+              -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+              -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+              -e AWS_DEFAULT_REGION="us-east-2" \
               ncsoccer-ui
 
             # Ensure Nginx is running

@@ -106,11 +106,14 @@ If you want Terraform to create a new hosted zone:
 
 ## Data Syncing
 
-The deployment includes automatic data syncing from your S3 bucket:
+The deployment includes automatic data syncing from the application's S3 bucket:
 
-1. An IAM role is created with restricted permissions to access only your specified S3 bucket and path
-2. On container startup, data is synced from S3 to the application's data directory
-3. You can update the S3 data and redeploy to refresh the application data
+1. An IAM role is created with restricted permissions to access the S3 bucket `ncsh-app-data` and the path `data/parquet`
+2. On container startup, the existing `make refresh-data` command is executed to fetch the data from S3
+3. The Makefile is configured to download the parquet file from `s3://ncsh-app-data/data/parquet/data.parquet` to `analysis/data/sample.parquet`
+4. The file is then copied to `data.parquet` for compatibility with the application
+
+No additional configuration is needed for data syncing as the S3 bucket and path are hardcoded in the Makefile.
 
 ## SSL Certificate Management
 

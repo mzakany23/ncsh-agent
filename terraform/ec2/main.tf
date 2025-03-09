@@ -61,8 +61,8 @@ resource "aws_iam_policy" "s3_data_access" {
           "s3:ListBucket"
         ],
         Resource = [
-          "arn:aws:s3:::${var.s3_data_bucket}",
-          "arn:aws:s3:::${var.s3_data_bucket}/${var.s3_data_path}/*"
+          "arn:aws:s3:::ncsh-app-data",
+          "arn:aws:s3:::ncsh-app-data/data/parquet/*"
         ]
       }
     ]

@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     apache2-utils \
     python3-pip \
     unzip \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AWS CLI
@@ -22,10 +23,10 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 RUN mkdir -p /app/memory
 
 # Create directory for data
-RUN mkdir -p /app/ui/data
+RUN mkdir -p /app/analysis/data
 
 # Install dependencies directly
-RUN pip install --no-cache-dir streamlit anthropic pandas llama-index duckdb matplotlib rich pytest numpy
+RUN pip install --no-cache-dir streamlit anthropic pandas llama-index duckdb matplotlib rich pytest numpy uv
 
 # Copy the application code first - more specific files will override if needed
 COPY . /app/
@@ -51,16 +52,6 @@ RUN echo 'server { \
 # Create a default htpasswd file
 RUN htpasswd -bc /etc/nginx/.htpasswd ncsoccer password
 
-# Create a sync script for S3 data
-RUN echo '#!/bin/bash \n\
-if [ -n "$S3_DATA_BUCKET" ] && [ -n "$S3_DATA_PATH" ]; then \n\
-    echo "Syncing data from s3://$S3_DATA_BUCKET/$S3_DATA_PATH to /app/ui/data" \n\
-    aws s3 sync s3://$S3_DATA_BUCKET/$S3_DATA_PATH /app/ui/data/ \n\
-else \n\
-    echo "S3_DATA_BUCKET or S3_DATA_PATH not set. Skipping data sync." \n\
-fi \n\
-' > /app/sync-data.sh && chmod +x /app/sync-data.sh
-
 # Create a simple entrypoint script
 RUN echo '#!/bin/bash \n\
 echo "Starting NC Soccer Hudson - Match Analysis Agent" \n\
@@ -71,8 +62,23 @@ if [ -n "$BASIC_AUTH_USERNAME" ] && [ -n "$BASIC_AUTH_PASSWORD" ]; then \n\
     htpasswd -bc /etc/nginx/.htpasswd "$BASIC_AUTH_USERNAME" "$BASIC_AUTH_PASSWORD" \n\
 fi \n\
 \n\
-# Sync data from S3 if configured \n\
-/app/sync-data.sh \n\
+# Sync data from S3 using Makefile \n\
+echo "Attempting to refresh data from S3..." \n\
+# First try with explicit credentials if provided \n\
+if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then \n\
+    echo "Using provided AWS credentials" \n\
+elif curl -s -m 1 http://169.254.169.254/latest/meta-data/iam/security-credentials/ > /dev/null ; then \n\
+    echo "Using EC2 instance profile for AWS credentials" \n\
+else \n\
+    echo "No AWS credentials available. Sync may fail if AWS credentials are required." \n\
+fi \n\
+# Run the data refresh command \n\
+cd /app && make refresh-data || echo "Failed to refresh data from S3" \n\
+# Copy the sample.parquet to data.parquet for compatibility if it exists \n\
+if [ -f "/app/analysis/data/sample.parquet" ]; then \n\
+    cp /app/analysis/data/sample.parquet /app/analysis/data/data.parquet \n\
+    echo "Data refreshed and copied to data.parquet" \n\
+fi \n\
 \n\
 # Start Nginx \n\
 echo "Starting Nginx..." \n\

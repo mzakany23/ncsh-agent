@@ -43,14 +43,3 @@ variable "admin_email" {
   description = "Email address for Let's Encrypt certificate notifications"
   type        = string
 }
-
-variable "s3_data_bucket" {
-  description = "S3 bucket name containing the application data"
-  type        = string
-}
-
-variable "s3_data_path" {
-  description = "Path within the S3 bucket to the application data"
-  type        = string
-  default     = "data"
-}
