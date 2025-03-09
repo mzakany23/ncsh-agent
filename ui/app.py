@@ -1,8 +1,9 @@
 """
-Streamlit UI for NC Soccer Agent
+NC Soccer Hudson - Match Analysis Agent
 
-This application provides a user-friendly interface for querying soccer match data
-using natural language questions powered by Claude 3.7.
+Welcome to the Match Analysis Agent! This tool lets you analyze soccer match data
+using natural language questions, providing insights about team performance, player
+statistics, match outcomes, and trends.
 """
 
 import os
@@ -327,11 +328,7 @@ if not st.session_state.memory.conversation_id:
             set_conversation_in_url(st.session_state.memory.conversation_id)
 
 # Streamlit UI components
-st.title("⚽ NC Soccer Match Analysis")
-st.markdown("""
-    Ask questions about soccer match data using natural language.
-    This tool uses Claude 3.7 to analyze the data and provide insights.
-""")
+st.title("⚽ NC Soccer Hudson - Match Analysis Agent")
 
 # Sidebar for configuration
 st.sidebar.title("⚙️ Configuration")
@@ -1093,6 +1090,31 @@ if st.session_state.memory.get_dataset_context() and not st.session_state.messag
             st.session_state.team_name = team_name
         else:
             st.session_state.team_name = None
+# Display welcome message and instructions when starting fresh
+elif not st.session_state.messages:
+    st.markdown("""
+    ### Welcome to the Match Analysis Agent!
+
+    **How to use this tool:**
+
+    1. **Ask Questions:** Type your questions about soccer matches in the input box below
+    2. **Select Datasets:** Use the sidebar to select or create specific datasets for focused analysis
+    3. **Manage Conversations:** Save, rename, or switch between conversations using the sidebar controls
+
+    **Features:**
+
+    - **Team Analysis:** Ask about team performance, statistics, trends, and match outcomes
+    - **Custom Datasets:** Create specialized datasets for specific teams or time periods
+    - **Conversation History:** Your analysis discussions are saved and can be revisited
+
+    **Example Questions:**
+    - "How did Hudson perform in their last 5 matches?"
+    - "Who scored the most goals this season?"
+    - "What was the pass completion rate for the midfielders?"
+    - "Compare home vs. away performance for Hudson"
+
+    Start by asking a question below!
+    """)
 
 # Input for user question
 if question := st.chat_input("Ask a question about the match data..."):
@@ -1380,6 +1402,10 @@ if question := st.chat_input("Ask a question about the match data..."):
 # Footer
 st.markdown("---")
 st.markdown(
-    "💡 **Tip:** For best results with datasets, first select or create a dataset from the sidebar. "
-    "Then ask specific questions about the dataset. For general questions, no dataset needs to be selected."
+    "💡 **Tips for NC Soccer Hudson Match Analysis:** \n"
+    "- **Team Analysis:** Select the Hudson team dataset for focused team analysis\n"
+    "- **Player Stats:** Ask specific questions about player performance metrics\n"
+    "- **Match Insights:** For detailed match analysis, mention specific dates or opponents\n"
+    "- **Custom Reports:** Create datasets with specific criteria for specialized analysis\n"
+    "- **Remember:** For general questions, use the main dataset. For team-specific analysis, select or create a team dataset first."
 )
