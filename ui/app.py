@@ -133,6 +133,7 @@ parquet_file = st.sidebar.text_input(
 class StreamlitChatMemory:
     def __init__(self):
         self.memory = []
+        self.dataset_context = None
 
     def add_message(self, role, content):
         self.memory.append({"role": role, "content": content})
@@ -148,8 +149,15 @@ class StreamlitChatMemory:
             result += f"{role_name}: {msg['content']}\n\n"
         return result
 
+    def set_dataset_context(self, context):
+        self.dataset_context = context
+
+    def get_dataset_context(self):
+        return self.dataset_context
+
     def clear(self):
         self.memory = []
+        self.dataset_context = None
 
 # Initialize memory in session state if it doesn't exist
 if 'memory' not in st.session_state:
@@ -159,16 +167,187 @@ if 'memory' not in st.session_state:
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
+# Initialize selected dataset in session state if it doesn't exist
+if 'selected_dataset' not in st.session_state:
+    st.session_state.selected_dataset = None
+
+# Function to find available datasets
+def find_datasets():
+    datasets = []
+    # Check the ui/data directory
+    ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
+    if os.path.exists(ui_data_dir):
+        for file in os.listdir(ui_data_dir):
+            if file.endswith('.parquet'):
+                datasets.append(os.path.join(ui_data_dir, file))
+
+    # Check the analysis/data directory
+    analysis_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis', 'data')
+    if os.path.exists(analysis_data_dir):
+        for file in os.listdir(analysis_data_dir):
+            if file.endswith('.parquet') and file != 'data.parquet':  # Exclude the main data file
+                datasets.append(os.path.join(analysis_data_dir, file))
+
+    # Check for datasets in the current directory
+    for file in os.listdir('.'):
+        if file.endswith('.parquet') and file != 'data.parquet':  # Exclude the main data file
+            datasets.append(file)
+
+    return datasets
+
+# Function to create a dataset using create_llm_dataset
+def create_dataset(team, format="table"):
+    try:
+        from analysis.tools.claude_tools import create_llm_dataset
+
+        # Generate the dataset
+        result = create_llm_dataset(
+            reasoning=f"Creating a dataset for {team} to use in LLM context for chat",
+            parquet_file=parquet_file,
+            team=team,
+            format=format
+        )
+
+        if "error" in result:
+            return None, result["error"]
+
+        # Save the formatted data to the context
+        dataset_context = f"""
+# {team} Team Dataset
+
+{result.get('data', '')}
+
+## Summary
+- Total matches: {result.get('row_count', 'Unknown')}
+- Dataset generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+
+        return dataset_context, None
+    except Exception as e:
+        logger.error(f"Error creating dataset: {e}")
+        logger.error(traceback.format_exc())
+        return None, str(e)
+
+# Function to load a selected dataset file
+def load_dataset_file(dataset_path):
+    try:
+        import pandas as pd
+
+        # Load the parquet file
+        df = pd.read_parquet(dataset_path)
+
+        # Convert to a readable format
+        team_name = os.path.basename(dataset_path).replace('_dataset.parquet', '').replace('_', ' ').title()
+
+        # Create a nicely formatted markdown table
+        if len(df) > 0:
+            # Format the date column if it exists
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+
+            # Generate a markdown table with the first 20 rows
+            table_rows = []
+            for _, row in df.head(20).iterrows():
+                table_rows.append(' | '.join([str(val) for val in row.values]))
+
+            table_header = ' | '.join(df.columns)
+            table_separator = ' | '.join(['---'] * len(df.columns))
+            table = f"{table_header}\n{table_separator}\n" + '\n'.join(table_rows)
+
+            dataset_context = f"""
+# {team_name} Team Dataset
+
+The dataset contains {len(df)} matches for {team_name}.
+
+## Sample Data (first 20 matches)
+{table}
+
+## Summary
+- Total matches: {len(df)}
+- Dataset loaded from: {dataset_path}
+- Dataset loaded at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            """
+
+            return dataset_context, None
+        else:
+            return None, "Dataset is empty"
+    except Exception as e:
+        logger.error(f"Error loading dataset: {e}")
+        logger.error(traceback.format_exc())
+        return None, str(e)
+
+# Add dataset management to the sidebar
+st.sidebar.markdown("---")
+st.sidebar.title("🗃️ Dataset Management")
+
+# Dataset creation section
+st.sidebar.subheader("Create New Dataset")
+team_name = st.sidebar.text_input("Team Name", value="", help="Enter a team name to create a dataset")
+format_options = ["table", "compact", "simple"]
+selected_format = st.sidebar.selectbox("Format", format_options, help="Select the format for the dataset")
+
+if st.sidebar.button("Create Dataset"):
+    if team_name:
+        with st.sidebar.status("Creating dataset..."):
+            dataset_context, error = create_dataset(team_name, selected_format)
+            if error:
+                st.sidebar.error(f"Error creating dataset: {error}")
+            else:
+                st.session_state.memory.set_dataset_context(dataset_context)
+                st.session_state.selected_dataset = f"{team_name} (In-Memory)"
+                st.sidebar.success(f"Dataset for {team_name} created successfully")
+    else:
+        st.sidebar.warning("Please enter a team name")
+
+# Dataset selection section
+st.sidebar.subheader("Select Existing Dataset")
+datasets = find_datasets()
+dataset_options = ["None"] + [os.path.basename(d) for d in datasets]
+selected_dataset_name = st.sidebar.selectbox("Available Datasets", dataset_options, help="Select a dataset to load into context")
+
+if selected_dataset_name != "None" and selected_dataset_name != st.session_state.selected_dataset:
+    with st.sidebar.status(f"Loading dataset {selected_dataset_name}..."):
+        # Find the full path of the selected dataset
+        selected_dataset_path = next((d for d in datasets if os.path.basename(d) == selected_dataset_name), None)
+        if selected_dataset_path:
+            dataset_context, error = load_dataset_file(selected_dataset_path)
+            if error:
+                st.sidebar.error(f"Error loading dataset: {error}")
+            else:
+                st.session_state.memory.set_dataset_context(dataset_context)
+                st.session_state.selected_dataset = selected_dataset_name
+                st.sidebar.success(f"Dataset {selected_dataset_name} loaded successfully")
+
+# Show the currently selected dataset
+if st.session_state.selected_dataset:
+    st.sidebar.info(f"Active Dataset: {st.session_state.selected_dataset}")
+else:
+    st.sidebar.info("No dataset selected")
+
+# Button to clear the selected dataset
+if st.sidebar.button("Clear Selected Dataset"):
+    st.session_state.memory.set_dataset_context(None)
+    st.session_state.selected_dataset = None
+    st.sidebar.success("Dataset selection cleared")
+
 # Button to clear chat history
 if st.sidebar.button("Clear Chat History"):
     st.session_state.messages = []
     st.session_state.memory.clear()
+    st.session_state.selected_dataset = None
     st.sidebar.success("Chat history cleared!")
 
 # Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
+# Display dataset context if selected (only when starting a new chat)
+if st.session_state.memory.get_dataset_context() and not st.session_state.messages:
+    with st.chat_message("assistant"):
+        st.markdown(st.session_state.memory.get_dataset_context())
+        # Add this initial context as the first message
+        st.session_state.messages.append({"role": "assistant", "content": st.session_state.memory.get_dataset_context()})
 
 # Input for user question
 if question := st.chat_input("Ask a question about the match data..."):
@@ -191,35 +370,32 @@ if question := st.chat_input("Ask a question about the match data..."):
                     # Get the conversation history as context
                     conversation_history = st.session_state.memory.get_messages_as_string()
 
-                    # Format the context in a cleaner way for the run_agent function
-                    if conversation_history and len(st.session_state.messages) > 2:  # Only add history if we have a meaningful conversation
-                        # Create a clear but compact conversation history for the agent
-                        context = f"\n\nOur previous conversation (most recent first):\n{conversation_history}"
-                        logger.info(f"Adding conversation context: {context[:200]}...")
+                    # Format the context differently if we have a dataset selected
+                    if st.session_state.memory.get_dataset_context():
+                        # For dataset context mode, we want a simpler prompt without using the agent
+                        enriched_question = f"{question}"
+                        use_agent = False
                     else:
-                        context = ""
-                        logger.info("No conversation context added")
+                        # For the full agent mode, add the conversation history
+                        if conversation_history and len(st.session_state.messages) > 2:
+                            context = f"\n\nOur previous conversation (most recent first):\n{conversation_history}"
+                            logger.info(f"Adding conversation context: {context[:200]}...")
+                        else:
+                            context = ""
+                            logger.info("No conversation context added")
 
-                    enriched_question = f"{question}{context}".strip()
-                    logger.info(f"Final question being processed: {enriched_question[:100]}...")
+                        enriched_question = f"{question}{context}".strip()
+                        logger.info(f"Final question being processed: {enriched_question[:100]}...")
+                        use_agent = True
 
-                    # Use the run_agent function from cli.py as originally designed
-                    import io
-                    import sys
-                    import re
-                    import json
-
-                    try:
-                        # Log the question being processed
-                        logger.info(f"Processing question with run_agent_once: {enriched_question[:100]}...")
-
+                    # Use the run_agent function for full agent mode, or direct Claude call for dataset context mode
+                    if use_agent:
                         # Prepare conversation history for the agent if this is a follow-up question
                         conversation_history = None
-                        if len(st.session_state.messages) > 2:  # More than just the welcome message and current question
+                        if len(st.session_state.messages) > 2:
                             conversation_history = []
                             # Add previous exchanges as conversation history
-                            for msg in st.session_state.messages[1:-1]:  # Skip welcome message and current question
-                                # Format as per Claude API requirements
+                            for msg in st.session_state.messages[1:-1]:
                                 if msg["role"] == "user":
                                     conversation_history.append({
                                         "role": "user",
@@ -237,23 +413,77 @@ if question := st.chat_input("Ask a question about the match data..."):
                             })
                             logger.info(f"Added conversation history with {len(conversation_history)} messages")
 
-                        # Run the agent with the question (non-interactive version)
-                        response = run_agent_once(
+                        # Run the agent with the question
+                        raw_output = run_agent_once(
                             enriched_question,
                             parquet_file,
                             max_tokens=4000,
                             conversation_history=conversation_history
                         )
+                    else:
+                        # Direct Claude call for dataset mode
+                        # Get API key from environment variable
+                        api_key = os.environ.get("ANTHROPIC_API_KEY")
+                        if not api_key:
+                            raise ValueError("ANTHROPIC_API_KEY environment variable is not set.")
 
-                        # Set raw_output to the response for compatibility with existing code
-                        raw_output = response
-                        logger.info(f"Received response with {len(raw_output)} characters")
-                        logger.info(f"Response preview: {raw_output[:200].replace(chr(10), ' ')}")
+                        # Initialize Claude client
+                        client = anthropic.Anthropic(api_key=api_key)
 
-                        # Check if we got any output
-                        if not raw_output or len(raw_output.strip()) == 0:
-                            raise ValueError("No output was returned from the analysis. Please try again.")
+                        # Create a system prompt for dataset context mode
+                        system_prompt = """
+                        You are a soccer match analyst who provides analysis based on the dataset provided.
+                        The user has loaded a specific dataset about a soccer team, and you should analyze
+                        that data to answer their questions.
 
+                        Format your response using Markdown for better readability.
+                        Focus only on the data provided in the dataset context.
+                        Organize the information logically with clear headings and sections.
+                        If you cannot answer a question from the provided dataset, explain what information is missing.
+                        """
+
+                        # Prepare the conversation history
+                        messages = []
+
+                        # Add the dataset context as system prompt addition
+                        dataset_context = st.session_state.memory.get_dataset_context()
+                        if dataset_context:
+                            system_prompt += f"\n\nHere is the dataset context to use for analysis:\n{dataset_context}"
+
+                        # Add previous messages for context
+                        for msg in st.session_state.messages:
+                            if msg["role"] == "user":
+                                messages.append({
+                                    "role": "user",
+                                    "content": [{"type": "text", "text": msg["content"]}]
+                                })
+                            else:
+                                # Skip the initial dataset context message to avoid duplication
+                                if not (msg["role"] == "assistant" and msg["content"] == dataset_context):
+                                    messages.append({
+                                        "role": "assistant",
+                                        "content": [{"type": "text", "text": msg["content"]}]
+                                    })
+
+                        # Call Claude API with context and question
+                        logger.info(f"Calling Claude directly with dataset context")
+                        claude_response = client.messages.create(
+                            model="claude-3-7-sonnet-20250219",
+                            max_tokens=4000,
+                            system=system_prompt,
+                            messages=messages
+                        )
+
+                        # Extract the response text
+                        raw_output = claude_response.content[0].text
+                        logger.info(f"Received dataset mode response from Claude with {len(raw_output)} characters")
+
+                    # Process the output
+                    if not raw_output or len(raw_output.strip()) == 0:
+                        raise ValueError("No output was returned from the analysis. Please try again.")
+
+                    # For the agent mode, we need to extract the Claude response
+                    if use_agent:
                         # Extract the Claude response using regex patterns
                         claude_patterns = [
                             r'\[cyan\]Claude:\[/cyan\]\s*(.*?)(?=\[|$)',  # Rich formatted output
@@ -293,53 +523,46 @@ if question := st.chat_input("Ask a question about the match data..."):
 
                         # Clean up the response for better formatting
                         # Remove any remaining rich formatting marks
-                        raw_response = re.sub(r'\[.*?\]', '', response)
+                        response = re.sub(r'\[.*?\]', '', response)
 
                         # Summarize the raw response using Claude to make it user-friendly
-                        # Get API key from environment variable
-                        api_key = os.environ.get("ANTHROPIC_API_KEY")
-                        if not api_key:
-                            logger.error("ANTHROPIC_API_KEY environment variable is not set.")
-                            raise ValueError("ANTHROPIC_API_KEY environment variable is not set.")
-
-                        # Initialize Claude client
-                        client = anthropic.Anthropic(api_key=api_key)
-
-                        # Create a system prompt for summarization
-                        system_prompt = """
-                        You are a soccer match analyst who provides clear, concise summaries of soccer match analysis.
-                        Your task is to take the raw output from a data analysis process and convert it into a user-friendly
-                        response that focuses only on the analysis results and insights, not the process.
-
-                        Format your response using Markdown for better readability.
-                        Include all relevant statistics from the original analysis.
-                        Preserve any tables or charts from the original output.
-                        Organize the information logically with clear headings and sections.
-                        Remove any technical details about SQL queries, tooling, or processing steps.
-                        Focus only on the soccer match insights that answer the user's question.
-                        """
-
-                        # Create a user prompt with the raw response
-                        user_prompt = f"""
-                        The following is the raw output from a soccer match analysis tool that contains both
-                        the process (SQL queries, tool calls, etc.) and the actual analysis results.
-                        Please summarize this into a clean, user-friendly response that only includes
-                        the relevant soccer match analysis insights.
-
-                        Original question: {question}
-
-                        Raw output:
-                        {raw_response}
-                        """
-
                         try:
                             # Call Claude API to summarize the response
                             logger.info("Calling Claude to summarize the response")
                             claude_summary = client.messages.create(
                                 model="claude-3-7-sonnet-20250219",
                                 max_tokens=4000,
-                                system=system_prompt,
-                                messages=[{"role": "user", "content": user_prompt}]
+                                system="""
+                                You are a soccer match analyst who provides clear, concise summaries of soccer match analysis.
+                                Your task is to take the raw output from a data analysis process and convert it into a user-friendly
+                                response that focuses only on the analysis results and insights, not the process.
+
+                                Format your response using Markdown for better readability.
+                                Include all relevant statistics from the original analysis.
+                                Preserve any tables or charts from the original output.
+                                Organize the information logically with clear headings and sections.
+                                Remove any technical details about SQL queries, tooling, or processing steps.
+                                Focus only on the soccer match insights that answer the user's question.
+                                """,
+                                messages=[{
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": f"""
+                                            The following is the raw output from a soccer match analysis tool that contains both
+                                            the process (SQL queries, tool calls, etc.) and the actual analysis results.
+                                            Please summarize this into a clean, user-friendly response that only includes
+                                            the relevant soccer match analysis insights.
+
+                                            Original question: {question}
+
+                                            Raw output:
+                                            {response}
+                                            """
+                                        }
+                                    ]
+                                }]
                             )
 
                             # Extract the summarized response
@@ -349,17 +572,14 @@ if question := st.chat_input("Ask a question about the match data..."):
                             logger.error(f"Error summarizing response with Claude: {str(e)}")
                             logger.error(traceback.format_exc())
                             # Fall back to the raw response if summarization fails
-                            response = raw_response
-
                             # Ensure it's formatted as markdown
                             if not any(md_marker in response for md_marker in ['#', '|', '*', '-', '```']):
                                 response = f"```\n{response}\n```"
+                    else:
+                        # For dataset mode, use the raw output directly
+                        response = raw_output
 
-                        logger.info(f"Final formatted response length: {len(response)}")
-
-                    except Exception as e:
-                        logger.error(f"Error processing question: {e}")
-                        raise ValueError(f"An error occurred while analyzing the data: {str(e)}")
+                    logger.info(f"Final formatted response length: {len(response)}")
 
                     # Update the message placeholder with the response
                     message_placeholder.markdown(response)
@@ -377,7 +597,6 @@ if question := st.chat_input("Ask a question about the match data..."):
 # Footer
 st.markdown("---")
 st.markdown(
-    "💡 **Tip:** For best results, ask specific questions about teams, matches, or statistics. "
-    "Examples: 'How did Key West FC perform?', 'Show me the top 5 teams with the most goals', or "
-    "'Create a dataset for Key West FC matches'."
+    "💡 **Tip:** For best results with datasets, first select or create a dataset from the sidebar. "
+    "Then ask specific questions about the dataset. For general questions, no dataset needs to be selected."
 )
