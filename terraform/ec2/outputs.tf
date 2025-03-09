@@ -8,7 +8,27 @@ output "public_dns" {
   value       = aws_instance.streamlit_server.public_dns
 }
 
-output "url" {
-  description = "URL to access the Streamlit application"
-  value       = "http://${aws_instance.streamlit_server.public_dns}"
+output "domain" {
+  description = "Domain name of the application"
+  value       = var.domain_name
+}
+
+output "http_url" {
+  description = "HTTP URL to access the application (redirects to HTTPS)"
+  value       = "http://${var.domain_name}"
+}
+
+output "https_url" {
+  description = "HTTPS URL to access the application"
+  value       = "https://${var.domain_name}"
+}
+
+output "certificate_arn" {
+  description = "ARN of the ACM certificate"
+  value       = aws_acm_certificate.cert.arn
+}
+
+output "zone_id" {
+  description = "Route 53 zone ID"
+  value       = local.zone_id
 }

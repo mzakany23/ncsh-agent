@@ -10,6 +10,15 @@ basic_auth_password = "your-secure-password-here"
 # Anthropic API key
 anthropic_api_key = "your-anthropic-api-key-here"
 
+# Domain configuration
+domain_name = "example.com"
+create_new_domain = false  # Set to true if you want Terraform to create the Route 53 zone
+admin_email = "admin@example.com"
+
+# S3 data configuration
+s3_data_bucket = "your-data-bucket-name"
+s3_data_path = "data"  # Path within the bucket
+
 # Optional: EC2 instance type (default: t2.micro)
 # instance_type = "t2.small"
 

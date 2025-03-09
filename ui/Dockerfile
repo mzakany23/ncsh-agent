@@ -8,10 +8,21 @@ RUN apt-get update && apt-get install -y \
     curl \
     nginx \
     apache2-utils \
+    python3-pip \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf aws awscliv2.zip
 
 # Create directory for memory persistence
 RUN mkdir -p /app/memory
+
+# Create directory for data
+RUN mkdir -p /app/ui/data
 
 # Install dependencies directly
 RUN pip install --no-cache-dir streamlit anthropic pandas llama-index duckdb matplotlib rich pytest numpy
@@ -40,6 +51,16 @@ RUN echo 'server { \
 # Create a default htpasswd file
 RUN htpasswd -bc /etc/nginx/.htpasswd ncsoccer password
 
+# Create a sync script for S3 data
+RUN echo '#!/bin/bash \n\
+if [ -n "$S3_DATA_BUCKET" ] && [ -n "$S3_DATA_PATH" ]; then \n\
+    echo "Syncing data from s3://$S3_DATA_BUCKET/$S3_DATA_PATH to /app/ui/data" \n\
+    aws s3 sync s3://$S3_DATA_BUCKET/$S3_DATA_PATH /app/ui/data/ \n\
+else \n\
+    echo "S3_DATA_BUCKET or S3_DATA_PATH not set. Skipping data sync." \n\
+fi \n\
+' > /app/sync-data.sh && chmod +x /app/sync-data.sh
+
 # Create a simple entrypoint script
 RUN echo '#!/bin/bash \n\
 echo "Starting NC Soccer Hudson - Match Analysis Agent" \n\
@@ -49,6 +70,9 @@ if [ -n "$BASIC_AUTH_USERNAME" ] && [ -n "$BASIC_AUTH_PASSWORD" ]; then \n\
     echo "Setting up authentication for user: $BASIC_AUTH_USERNAME" \n\
     htpasswd -bc /etc/nginx/.htpasswd "$BASIC_AUTH_USERNAME" "$BASIC_AUTH_PASSWORD" \n\
 fi \n\
+\n\
+# Sync data from S3 if configured \n\
+/app/sync-data.sh \n\
 \n\
 # Start Nginx \n\
 echo "Starting Nginx..." \n\

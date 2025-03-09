@@ -15,7 +15,7 @@ provider "aws" {
 # VPC and Security Group
 resource "aws_security_group" "streamlit_sg" {
   name        = "streamlit-sg"
-  description = "Allow HTTP and SSH traffic"
+  description = "Allow HTTP, HTTPS and SSH traffic"
 
   ingress {
     from_port   = 80
@@ -46,12 +46,119 @@ resource "aws_security_group" "streamlit_sg" {
   }
 }
 
+# S3 Data Bucket IAM Policy - Only allow access to specific bucket and path
+resource "aws_iam_policy" "s3_data_access" {
+  name        = "ncsoccer-s3-data-access"
+  description = "Allow access to specific S3 data bucket and path"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          "arn:aws:s3:::${var.s3_data_bucket}",
+          "arn:aws:s3:::${var.s3_data_bucket}/${var.s3_data_path}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# IAM Role for EC2
+resource "aws_iam_role" "ec2_role" {
+  name = "ncsoccer-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Attach the S3 data access policy to the role
+resource "aws_iam_role_policy_attachment" "s3_data_access_attachment" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.s3_data_access.arn
+}
+
+# Create instance profile
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ncsoccer-ec2-profile"
+  role = aws_iam_role.ec2_role.name
+}
+
+# Route 53 Domain Setup (if using a new domain)
+resource "aws_route53_zone" "main" {
+  count = var.create_new_domain ? 1 : 0
+  name  = var.domain_name
+}
+
+# Use existing Route 53 hosted zone (if using existing domain)
+data "aws_route53_zone" "existing" {
+  count = var.create_new_domain ? 0 : 1
+  name  = var.domain_name
+}
+
+locals {
+  zone_id = var.create_new_domain ? aws_route53_zone.main[0].zone_id : data.aws_route53_zone.existing[0].zone_id
+}
+
+# ACM Certificate for HTTPS
+resource "aws_acm_certificate" "cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  subject_alternative_names = [
+    "*.${var.domain_name}"
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# DNS validation records for ACM
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => {
+      name    = dvo.resource_record_name
+      type    = dvo.resource_record_type
+      record  = dvo.resource_record_value
+    }
+  }
+
+  zone_id = local.zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.record]
+  ttl     = 60
+}
+
+# Certificate validation
+resource "aws_acm_certificate_validation" "cert" {
+  certificate_arn         = aws_acm_certificate.cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
 # EC2 Instance
 resource "aws_instance" "streamlit_server" {
   ami                    = var.ami_id
   instance_type          = var.instance_type
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.streamlit_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
   # Install required software via user_data
   user_data = <<-EOF
@@ -67,7 +174,7 @@ resource "aws_instance" "streamlit_server" {
     # Install Docker and dependencies
     echo "Installing Docker..."
     amazon-linux-extras install -y docker
-    yum install -y git httpd-tools
+    yum install -y git httpd-tools certbot
 
     # Start and enable Docker
     echo "Starting Docker service..."
@@ -84,14 +191,32 @@ resource "aws_instance" "streamlit_server" {
     git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/streamlit-app
     chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
 
-    # Configure Nginx with Basic Auth
-    echo "Configuring Nginx with Basic Auth..."
+    # Configure Nginx with Basic Auth and SSL
+    echo "Configuring Nginx with Basic Auth and SSL..."
     amazon-linux-extras install -y nginx1
     cat > /etc/nginx/conf.d/streamlit.conf << 'NGINXCONF'
     server {
         listen 80 default_server;
-        server_name _;
+        server_name ${var.domain_name} www.${var.domain_name};
         client_max_body_size 100M;
+
+        # Redirect to HTTPS
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name ${var.domain_name} www.${var.domain_name};
+        client_max_body_size 100M;
+
+        # SSL Certificate
+        ssl_certificate     /etc/letsencrypt/live/${var.domain_name}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/${var.domain_name}/privkey.pem;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
 
         location / {
             auth_basic "NC Soccer Hudson - Match Analysis Agent";
@@ -114,6 +239,16 @@ resource "aws_instance" "streamlit_server" {
     echo "Creating basic auth credentials..."
     htpasswd -bc /etc/nginx/.htpasswd ncsoccer "${var.basic_auth_password}"
 
+    # Set up Let's Encrypt SSL
+    echo "Setting up Let's Encrypt certificates..."
+    certbot certonly --standalone -d ${var.domain_name} -d www.${var.domain_name} \
+      --non-interactive --agree-tos -m ${var.admin_email} \
+      --pre-hook "systemctl stop nginx" \
+      --post-hook "systemctl start nginx"
+
+    # Set up auto-renewal
+    echo "0 0,12 * * * root certbot renew --pre-hook 'systemctl stop nginx' --post-hook 'systemctl start nginx' --quiet" > /etc/cron.d/certbot-renewal
+
     # Build and run Docker container
     echo "Building and running Docker container..."
     cd /home/ec2-user/streamlit-app
@@ -123,6 +258,8 @@ resource "aws_instance" "streamlit_server" {
       -e ANTHROPIC_API_KEY="${var.anthropic_api_key}" \
       -e BASIC_AUTH_USERNAME=ncsoccer \
       -e BASIC_AUTH_PASSWORD="${var.basic_auth_password}" \
+      -e S3_DATA_BUCKET="${var.s3_data_bucket}" \
+      -e S3_DATA_PATH="${var.s3_data_path}" \
       ncsoccer-ui
 
     # Start and enable Nginx
@@ -149,4 +286,22 @@ resource "aws_instance" "streamlit_server" {
   tags = {
     Name = "ncsoccer-streamlit-server"
   }
+}
+
+# Route 53 A Record for the domain
+resource "aws_route53_record" "www" {
+  zone_id = local.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = "300"
+  records = [aws_instance.streamlit_server.public_ip]
+}
+
+# Route 53 A Record for www subdomain
+resource "aws_route53_record" "www_subdomain" {
+  zone_id = local.zone_id
+  name    = "www.${var.domain_name}"
+  type    = "A"
+  ttl     = "300"
+  records = [aws_instance.streamlit_server.public_ip]
 }
