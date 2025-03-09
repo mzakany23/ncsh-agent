@@ -12,6 +12,7 @@ An agentic approach to query soccer match data using Claude 3.7's tool calling c
 - **SQL Validation**: Validates generated SQL before execution to prevent errors
 - **Recursive Tool Calling**: Advanced pipeline that allows Claude to use multiple tools in sequence
 - **Interactive UI**: Streamlit-based user interface for easy interaction
+- **Dataset Management**: Create and select team-specific datasets for faster, context-efficient analysis
 
 ## Architecture
 
@@ -22,6 +23,7 @@ The project uses an intelligent agent architecture with the following components
 - **Tools Framework**: A comprehensive set of tools for Claude to interact with the database
 - **Analysis Module**: Enhanced data analysis capabilities for soccer match data
 - **Streamlit UI**: Web interface for interactive querying
+- **Dataset Context Mode**: Alternative lightweight mode for faster responses with pre-loaded data
 
 ## Setup
 
@@ -75,6 +77,19 @@ Launch the web interface for interactive querying:
 cd ui && python -m streamlit run app.py
 ```
 
+#### Dataset Mode
+
+In the Streamlit UI, you can use the Dataset Management feature in the sidebar to:
+
+1. **Create New Datasets**: Generate LLM-optimized datasets for specific teams
+2. **Select Existing Datasets**: Choose from previously created datasets
+3. **Chat with Dataset Context**: Ask questions directly about the selected dataset
+
+This feature provides:
+- **Faster Responses**: Without the overhead of running SQL queries each time
+- **Focused Analysis**: Interactions are specifically about the loaded dataset
+- **Simplified Context**: Using a smaller, targeted context window for more efficient processing
+
 ## Project Structure
 
 - `cli.py`: Command-line interface for the agent
@@ -84,8 +99,9 @@ cd ui && python -m streamlit run app.py
   - `tools/`: Tool implementations for Claude 3.7
     - `claude_tools.py`: Tool definitions and implementations
 - `ui/`: Streamlit-based web interface
-  - `app.py`: Main Streamlit application
+  - `app.py`: Main Streamlit application with dataset management
   - `streamlit_agent.py`: Streamlit-compatible agent implementation
+  - `data/`: Directory for storing team-specific datasets
 
 ## Examples
 
@@ -106,6 +122,14 @@ uv run cli.py query "Show me all matches where Key West FC scored more than 5 go
 ```bash
 uv run cli.py team "Key West FC"
 ```
+
+### Using Dataset Mode in Streamlit UI
+
+1. In the sidebar, enter "Key West FC" in the Team Name field
+2. Click "Create Dataset" to generate an optimized dataset
+3. The dataset will load automatically and be displayed in the chat
+4. Ask questions about Key West FC: "How many games did they win in January?"
+5. The responses will be faster as they use the pre-loaded dataset context
 
 ## Contributing
 
