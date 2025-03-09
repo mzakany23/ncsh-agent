@@ -1,12 +1,11 @@
 terraform {
-  # This will be filled in after running the bootstrap process
-  # backend "s3" {
-  #   bucket         = "BUCKET_NAME_FROM_BOOTSTRAP"
-  #   key            = "ec2/terraform.tfstate"
-  #   region         = "us-east-2"
-  #   dynamodb_table = "DYNAMODB_TABLE_FROM_BOOTSTRAP"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "ncsoccer-tfstate-siu66w32"
+    key            = "ec2/terraform.tfstate"
+    region         = "us-east-2"
+    dynamodb_table = "ncsoccer-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -51,7 +50,7 @@ resource "aws_security_group" "streamlit_sg" {
 resource "aws_instance" "streamlit_server" {
   ami                    = "ami-0c55b159cbfafe1f0"  # Amazon Linux 2 AMI (update with latest)
   instance_type          = "t2.micro"  # Free tier eligible
-  key_name               = "ncsoccer-key"  # Create this in AWS first
+  key_name               = var.key_name  # Create this in AWS first
   vpc_security_group_ids = [aws_security_group.streamlit_sg.id]
 
   # Install required software via user_data
@@ -110,14 +109,4 @@ resource "aws_instance" "streamlit_server" {
   tags = {
     Name = "ncsoccer-streamlit-server"
   }
-}
-
-# Output the public IP
-output "public_ip" {
-  value = aws_instance.streamlit_server.public_ip
-}
-
-# Output the public DNS
-output "public_dns" {
-  value = aws_instance.streamlit_server.public_dns
 }
