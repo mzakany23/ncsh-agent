@@ -61,7 +61,6 @@ def get_tool_mapping():
                 "complete_task": None}
 
 def run_agent_once(question: str, parquet_file: str, max_tokens: int = 4000,
-                  thinking_budget_tokens: Optional[int] = None,
                   conversation_history: List[Dict[str, str]] = None):
     """
     Modified version of run_agent for Streamlit that processes a question using the
@@ -71,7 +70,6 @@ def run_agent_once(question: str, parquet_file: str, max_tokens: int = 4000,
         question: Natural language question about the data
         parquet_file: Path to parquet file
         max_tokens: Maximum tokens for Claude response
-        thinking_budget_tokens: Ignored (kept for backward compatibility)
         conversation_history: Optional list of previous messages
 
     Returns:
