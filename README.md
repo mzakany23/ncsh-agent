@@ -89,6 +89,9 @@ This feature provides:
 - **Faster Responses**: Without the overhead of running SQL queries each time
 - **Focused Analysis**: Interactions are specifically about the loaded dataset
 - **Simplified Context**: Using a smaller, targeted context window for more efficient processing
+- **Smart Query Routing**: Automatically switches to full SQL queries for statistical questions that require complete dataset analysis
+
+The system intelligently detects when a question requires comprehensive statistics (like "biggest win" or "highest scoring match") and will automatically use the full database for those queries while maintaining fast responses for simpler questions.
 
 ## Project Structure
 

@@ -16,6 +16,7 @@ import streamlit as st
 from typing import Dict, List, Any, Optional
 import anthropic
 from datetime import datetime
+import time
 
 # Add parent directory to path to find modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -220,6 +221,7 @@ def create_dataset(team, format="table"):
 ## Summary
 - Total matches: {result.get('row_count', 'Unknown')}
 - Dataset generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- Team name: {team}
         """
 
         return dataset_context, None
@@ -348,6 +350,17 @@ if st.session_state.memory.get_dataset_context() and not st.session_state.messag
         st.markdown(st.session_state.memory.get_dataset_context())
         # Add this initial context as the first message
         st.session_state.messages.append({"role": "assistant", "content": st.session_state.memory.get_dataset_context()})
+        # Extract team name from context for potential SQL queries
+        team_name = None
+        context_lines = st.session_state.memory.get_dataset_context().split('\n')
+        for line in context_lines:
+            if line.startswith('# ') and 'Team Dataset' in line:
+                team_name = line.replace('# ', '').replace(' Team Dataset', '').strip()
+                break
+        if team_name:
+            st.session_state.team_name = team_name
+        else:
+            st.session_state.team_name = None
 
 # Input for user question
 if question := st.chat_input("Ask a question about the match data..."):
@@ -372,9 +385,29 @@ if question := st.chat_input("Ask a question about the match data..."):
 
                     # Format the context differently if we have a dataset selected
                     if st.session_state.memory.get_dataset_context():
-                        # For dataset context mode, we want a simpler prompt without using the agent
-                        enriched_question = f"{question}"
-                        use_agent = False
+                        # Check if the question requires deep analysis with SQL
+                        if requires_deep_analysis(question, st.session_state.memory.get_dataset_context()):
+                            # For questions requiring comprehensive statistics, use the full agent pipeline
+                            # Get team name from session state if available
+                            team_name = getattr(st.session_state, 'team_name', None)
+
+                            if team_name:
+                                # Create a more specific question that includes the team name for the agent
+                                enriched_question = f"Analyze and provide comprehensive statistics about {team_name}: {question}"
+                                logger.info(f"Using full agent pipeline for statistical analysis about {team_name}")
+                            else:
+                                enriched_question = f"Analyze and provide comprehensive statistics: {question}"
+                                logger.info("Using full agent pipeline for statistical analysis")
+
+                            use_agent = True
+                            with st.status("This question requires comprehensive analysis. Running full database query..."):
+                                st.write("For detailed statistical analysis, we're querying the entire dataset.")
+                                time.sleep(1)  # Brief pause to show the status message
+                        else:
+                            # For simple questions, use the dataset context
+                            enriched_question = f"{question}"
+                            use_agent = False
+                            logger.info("Using dataset context mode for simple question")
                     else:
                         # For the full agent mode, add the conversation history
                         if conversation_history and len(st.session_state.messages) > 2:
@@ -439,7 +472,8 @@ if question := st.chat_input("Ask a question about the match data..."):
                         Format your response using Markdown for better readability.
                         Focus only on the data provided in the dataset context.
                         Organize the information logically with clear headings and sections.
-                        If you cannot answer a question from the provided dataset, explain what information is missing.
+                        If you cannot answer a question from the provided dataset, explain what information is missing
+                        and suggest that the user could switch to a comprehensive statistics mode for full database analysis.
                         """
 
                         # Prepare the conversation history
@@ -600,3 +634,36 @@ st.markdown(
     "💡 **Tip:** For best results with datasets, first select or create a dataset from the sidebar. "
     "Then ask specific questions about the dataset. For general questions, no dataset needs to be selected."
 )
+
+# Function to determine if a question requires statistical analysis beyond the loaded context
+def requires_deep_analysis(question, dataset_context):
+    """
+    Determines if a question requires deep statistical analysis that would benefit from SQL queries
+    rather than using the limited dataset context.
+    """
+    # Convert question to lowercase for easier matching
+    question_lower = question.lower()
+
+    # Keywords that suggest statistical analysis
+    statistical_terms = [
+        "most", "least", "biggest", "smallest", "highest", "lowest",
+        "average", "mean", "median", "maximum", "minimum", "max", "min",
+        "total", "count", "percentage", "ratio", "compare", "comparison",
+        "all time", "ever", "all matches", "statistics", "stats", "record",
+        "ranking", "ranked", "rank", "top", "bottom", "best", "worst"
+    ]
+
+    # Check if question contains statistical terms
+    has_statistical_term = any(term in question_lower for term in statistical_terms)
+
+    # If dataset context includes all matches (unlikely), we don't need deep analysis
+    context_has_all_matches = False
+    if dataset_context:
+        lines = dataset_context.split('\n')
+        for line in lines:
+            if "Sample Data" in line and "(first 20 matches)" in line:
+                context_has_all_matches = False
+                break
+
+    # If the question seems to require comprehensive statistics and context doesn't have all matches
+    return has_statistical_term and not context_has_all_matches
