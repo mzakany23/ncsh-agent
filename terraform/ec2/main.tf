@@ -56,10 +56,38 @@ resource "aws_instance" "streamlit_server" {
   # Install required software via user_data
   user_data = <<-EOF
     #!/bin/bash
+    set -e
+
+    echo "===== Starting deployment setup: $(date) ====="
+
+    # Update system packages
+    echo "Updating system packages..."
     yum update -y
-    yum install -y nginx python3 python3-pip git htpasswd
+
+    # Install Nginx, Python, and other dependencies
+    echo "Installing Nginx and Python..."
+    amazon-linux-extras install -y nginx1 python3
+    yum install -y python3-pip git httpd-tools
+    pip3 install --upgrade pip
+
+    # Install Streamlit and required Python packages - use local user to avoid permission issues
+    echo "Installing Python packages..."
+    sudo -u ec2-user pip3 install --user streamlit pandas pytest numpy
+
+    # Create application directories
+    echo "Setting up application directories..."
+    mkdir -p /home/ec2-user/streamlit-app
+    chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
+
+    # Clone the application code from GitHub
+    echo "Cloning application code..."
+    git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/temp-app
+    cp -R /home/ec2-user/temp-app/* /home/ec2-user/streamlit-app/
+    rm -rf /home/ec2-user/temp-app
+    chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
 
     # Configure Nginx with Basic Auth
+    echo "Configuring Nginx with Basic Auth..."
     cat > /etc/nginx/conf.d/streamlit.conf << 'NGINXCONF'
     server {
         listen 80 default_server;
@@ -67,7 +95,7 @@ resource "aws_instance" "streamlit_server" {
         client_max_body_size 100M;
 
         location / {
-            auth_basic "Restricted Access";
+            auth_basic "NC Soccer Hudson - Match Analysis Agent";
             auth_basic_user_file /etc/nginx/.htpasswd;
             proxy_pass http://localhost:8501;
             proxy_http_version 1.1;
@@ -83,56 +111,69 @@ resource "aws_instance" "streamlit_server" {
     }
     NGINXCONF
 
-    # Create a password file for Nginx Basic Auth
-    htpasswd -bc /etc/nginx/.htpasswd ncsoccer ${var.basic_auth_password}
+    # Create htpasswd file for Nginx Basic Auth
+    echo "Creating basic auth credentials..."
+    htpasswd -bc /etc/nginx/.htpasswd ncsoccer "${var.basic_auth_password}"
 
-    # Configure Streamlit as a service
-    cat > /etc/systemd/system/streamlit.service << 'STREAMLITSERVICE'
-    [Unit]
-    Description=NC Soccer Hudson - Match Analysis Agent
-    After=network.target
+    # Configure Streamlit as a systemd service
+    echo "Creating Streamlit service..."
+    cat > /etc/systemd/system/streamlit.service << STREAMLITSERVICE
+[Unit]
+Description=NC Soccer Hudson - Match Analysis Agent
+After=network.target
 
-    [Service]
-    User=ec2-user
-    WorkingDirectory=/home/ec2-user/streamlit-app
-    ExecStart=/usr/bin/python3 -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0
-    Restart=always
-    Environment="ANTHROPIC_API_KEY=${var.anthropic_api_key}"
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/streamlit-app/ui
+ExecStart=/home/ec2-user/.local/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+Restart=always
+Environment="ANTHROPIC_API_KEY=${var.anthropic_api_key}"
 
-    [Install]
-    WantedBy=multi-user.target
-    STREAMLITSERVICE
+[Install]
+WantedBy=multi-user.target
+STREAMLITSERVICE
 
-    # Create directory structure first
-    mkdir -p /home/ec2-user/streamlit-app
-    chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
-
-    # Clone the application code from GitHub
-    git clone https://github.com/mzakany23/ncsh-agent.git /home/ec2-user/temp-app
-    cp -R /home/ec2-user/temp-app/* /home/ec2-user/streamlit-app/
-    rm -rf /home/ec2-user/temp-app
-
-    # Install Python dependencies
-    pip3 install -r /home/ec2-user/streamlit-app/requirements.txt
-
-    # Ensure Nginx can start after reboot
+    # Start and enable Nginx
+    echo "Starting Nginx..."
     systemctl enable nginx
     systemctl start nginx
 
-    # Enable and start the Streamlit service
-    systemctl enable streamlit
-    systemctl start streamlit
+    # Create a fallback script for manual Streamlit start (in case systemd service fails)
+    echo "Creating fallback start script..."
+    cat > /home/ec2-user/start_streamlit.sh << 'STARTSCRIPT'
+#!/bin/bash
+cd /home/ec2-user/streamlit-app/ui
+nohup ~/.local/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0 > /tmp/streamlit.log 2>&1 &
+STARTSCRIPT
+    chmod +x /home/ec2-user/start_streamlit.sh
+    chown ec2-user:ec2-user /home/ec2-user/start_streamlit.sh
 
-    # Disable SELinux if it's preventing connections
+    # Start Streamlit service
+    echo "Starting Streamlit service..."
+    systemctl daemon-reload
+    systemctl enable streamlit
+    systemctl start streamlit || echo "Streamlit service failed to start, fallback script available at /home/ec2-user/start_streamlit.sh"
+
+    # If Streamlit service fails, run it with the fallback approach
+    if ! systemctl is-active --quiet streamlit; then
+      echo "Streamlit service failed to start, using fallback method..."
+      sudo -u ec2-user /home/ec2-user/start_streamlit.sh
+    fi
+
+    # Disable SELinux to avoid permission issues
+    echo "Configuring SELinux..."
     setenforce 0 || true
     sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config || true
 
-    # Open firewall ports if firewalld is installed
+    # Configure firewall if needed
     if command -v firewall-cmd &> /dev/null; then
+        echo "Configuring firewall..."
         firewall-cmd --permanent --add-service=http
         firewall-cmd --permanent --add-service=https
         firewall-cmd --reload
     fi
+
+    echo "===== Deployment setup finished: $(date) ====="
   EOF
 
   tags = {
