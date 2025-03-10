@@ -23,6 +23,11 @@ output "https_url" {
   value       = var.enable_domain_and_tls ? "https://${var.domain_name}" : null
 }
 
+output "ncsh_url" {
+  description = "HTTPS URL for the ncsh subdomain (if TLS enabled)"
+  value       = var.enable_domain_and_tls ? "https://ncsh.${var.domain_name}" : null
+}
+
 output "certificate_arn" {
   description = "ARN of the ACM certificate (if TLS enabled)"
   value       = var.enable_domain_and_tls ? aws_acm_certificate.cert[0].arn : null

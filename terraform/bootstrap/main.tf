@@ -2,6 +2,13 @@ provider "aws" {
   region = "us-east-2"
 }
 
+# Variables
+variable "domain_name" {
+  description = "Domain name for the application (optional)"
+  type        = string
+  default     = ""
+}
+
 # Random string to make bucket name unique
 resource "random_string" "suffix" {
   length  = 8
@@ -72,6 +79,18 @@ resource "aws_dynamodb_table" "terraform_locks" {
   }
 }
 
+# Route 53 hosted zone (if domain is provided)
+resource "aws_route53_zone" "main" {
+  count = var.domain_name != "" ? 1 : 0
+  name  = var.domain_name
+
+  tags = {
+    Name        = "NC Soccer Route 53 Zone"
+    Environment = "All"
+    ManagedBy   = "Terraform"
+  }
+}
+
 # Outputs
 output "s3_bucket_name" {
   value       = aws_s3_bucket.terraform_state.bucket
@@ -81,6 +100,21 @@ output "s3_bucket_name" {
 output "dynamodb_table_name" {
   value       = aws_dynamodb_table.terraform_locks.name
   description = "The name of the DynamoDB table for Terraform state locking"
+}
+
+output "route53_zone_id" {
+  value       = var.domain_name != "" ? aws_route53_zone.main[0].zone_id : ""
+  description = "The ID of the Route 53 zone (if created)"
+}
+
+output "route53_zone_name" {
+  value       = var.domain_name != "" ? aws_route53_zone.main[0].name : ""
+  description = "The name of the Route 53 zone (if created)"
+}
+
+output "route53_nameservers" {
+  value       = var.domain_name != "" ? aws_route53_zone.main[0].name_servers : []
+  description = "The nameservers for the Route 53 zone (if created)"
 }
 
 output "terraform_backend_config" {
