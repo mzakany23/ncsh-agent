@@ -274,9 +274,68 @@ locals {
     amazon-linux-extras install -y epel
     yum install -y certbot python3-certbot-nginx
 
-    # Obtain Let's Encrypt certificates (will replace self-signed when ready)
-    echo "Obtaining Let's Encrypt certificates (in background)..."
-    nohup certbot --nginx -d ncsh.${var.domain_name} --non-interactive --agree-tos -m ${var.admin_email} --redirect --verbose > /var/log/certbot.log 2>&1 &
+    # Stop Nginx briefly to free up port 80 for certbot standalone verification
+    echo "Stopping Nginx for certbot verification..."
+    systemctl stop nginx
+
+    # Obtain Let's Encrypt certificates using standalone mode (more reliable)
+    echo "Obtaining Let's Encrypt certificates..."
+    certbot certonly --standalone --non-interactive --agree-tos -m ${var.admin_email} -d ncsh.${var.domain_name} --debug-challenges --verbose
+
+    # Get the certificate path
+    CERT_PATH="/etc/letsencrypt/live/ncsh.${var.domain_name}"
+
+    # Check if certificate exists
+    if [ -d "$CERT_PATH" ]; then
+        echo "Let's Encrypt certificates obtained successfully!"
+
+        # Update Nginx configuration to use Let's Encrypt certificates
+        cat > /etc/nginx/conf.d/streamlit.conf << NGINXCONF
+    server {
+        listen 80;
+        server_name ncsh.${var.domain_name};
+
+        # Redirect all HTTP requests to HTTPS
+        location / {
+            return 301 https://\$host\$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        server_name ncsh.${var.domain_name};
+        client_max_body_size 100M;
+
+        ssl_certificate $CERT_PATH/fullchain.pem;
+        ssl_certificate_key $CERT_PATH/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+
+        location / {
+            auth_basic "NC Soccer Hudson - Match Analysis Agent";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+            proxy_pass http://localhost:8501;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 86400;
+            proxy_cache_bypass \$http_upgrade;
+        }
+    }
+    NGINXCONF
+    else
+        echo "Failed to obtain Let's Encrypt certificates. Using self-signed certificates as fallback."
+    fi
+
+    # Start Nginx
+    echo "Starting Nginx with TLS configuration..."
+    systemctl start nginx
+    systemctl status nginx
 
     # Set up automatic renewal
     echo "Setting up automatic certificate renewal..."
