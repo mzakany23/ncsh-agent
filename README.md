@@ -142,3 +142,192 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 [MIT License](LICENSE)
+
+# NC Soccer Hudson - Match Analysis Agent
+
+This repository contains the Match Analysis Agent for NC Soccer Hudson, powered by AI to help analyze soccer matches.
+
+## Architecture
+
+The application is built using:
+- Streamlit for the web interface
+- Anthropic Claude AI for match analysis
+- Nginx as a reverse proxy with basic authentication
+- Docker for containerization and deployment
+
+## Local Development
+
+### Prerequisites
+
+1. Docker and Docker Compose installed
+2. Anthropic API key
+3. Git
+
+### Setup and Run
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/mzakany23/ncsh-agent.git
+   cd ncsh-agent
+   ```
+
+2. Set up the Nginx configuration and basic auth:
+   ```bash
+   mkdir -p nginx
+   htpasswd -bc nginx/.htpasswd ncsoccer password123
+
+   cat > nginx/nginx.conf << EOF
+   server {
+       listen 80 default_server;
+       server_name _;
+       client_max_body_size 100M;
+
+       location / {
+           auth_basic "NC Soccer Hudson - Match Analysis Agent";
+           auth_basic_user_file /etc/nginx/.htpasswd;
+           proxy_pass http://streamlit:8501;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade \$http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host \$host;
+           proxy_set_header X-Real-IP \$remote_addr;
+           proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto \$scheme;
+           proxy_read_timeout 86400;
+           proxy_cache_bypass \$http_upgrade;
+       }
+   }
+   EOF
+   ```
+
+3. Set your Anthropic API key:
+   ```bash
+   export ANTHROPIC_API_KEY=your-anthropic-api-key
+   ```
+
+4. Start the application with Docker Compose:
+   ```bash
+   docker-compose up
+   ```
+
+5. Access the application at http://localhost with the following credentials:
+   - Username: `ncsoccer`
+   - Password: `password123` (or the value you set in step 2)
+
+### Development Mode
+
+For active development, uncomment the volumes line in `docker-compose.yml` to enable hot reloading of changes:
+
+```yaml
+volumes:
+  - ./ui:/app
+```
+
+## AWS EC2 Deployment
+
+### Using Terraform (Recommended)
+
+For automated deployment to AWS EC2, see the [Terraform EC2 README](terraform/ec2/README.md).
+
+### Manual Deployment to EC2
+
+If you prefer to manually deploy to an existing EC2 instance:
+
+1. SSH into your EC2 instance:
+   ```bash
+   ssh -i your-key.pem ec2-user@your-ec2-ip
+   ```
+
+2. Install Docker:
+   ```bash
+   sudo amazon-linux-extras install -y docker
+   sudo systemctl start docker
+   sudo systemctl enable docker
+   ```
+
+3. Install Nginx:
+   ```bash
+   sudo amazon-linux-extras install -y nginx1
+   ```
+
+4. Clone the repository:
+   ```bash
+   git clone https://github.com/mzakany23/ncsh-agent.git ~/streamlit-app
+   ```
+
+5. Set up Nginx configuration:
+   ```bash
+   sudo cat > /etc/nginx/conf.d/streamlit.conf << 'EOF'
+   server {
+       listen 80 default_server;
+       server_name _;
+       client_max_body_size 100M;
+
+       location / {
+           auth_basic "NC Soccer Hudson - Match Analysis Agent";
+           auth_basic_user_file /etc/nginx/.htpasswd;
+           proxy_pass http://localhost:8501;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_read_timeout 86400;
+           proxy_cache_bypass $http_upgrade;
+       }
+   }
+   EOF
+   ```
+
+6. Create basic auth credentials:
+   ```bash
+   sudo yum install -y httpd-tools
+   sudo htpasswd -bc /etc/nginx/.htpasswd ncsoccer your-password
+   ```
+
+7. Build and run the Docker container:
+   ```bash
+   cd ~/streamlit-app
+   sudo docker build -t ncsoccer-ui -f ui/Dockerfile .
+   sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+     -p 8501:8501 \
+     -e ANTHROPIC_API_KEY="your-anthropic-api-key" \
+     -e BASIC_AUTH_USERNAME=ncsoccer \
+     -e BASIC_AUTH_PASSWORD="your-password" \
+     ncsoccer-ui
+   ```
+
+8. Start Nginx:
+   ```bash
+   sudo systemctl enable nginx
+   sudo systemctl start nginx
+   ```
+
+9. Access your application at http://your-ec2-ip with the credentials you specified.
+
+## Troubleshooting
+
+### Local Development
+
+1. If the Docker container fails to start:
+   ```bash
+   docker logs ncsoccer-ui
+   ```
+
+2. If Nginx fails to start:
+   ```bash
+   docker logs ncsh-agent_nginx_1
+   ```
+
+3. To rebuild the Docker image:
+   ```bash
+   docker-compose down
+   docker-compose build --no-cache
+   docker-compose up
+   ```
+
+### EC2 Deployment
+
+See the [Terraform EC2 README](terraform/ec2/README.md#troubleshooting) for detailed troubleshooting steps for EC2 deployments.

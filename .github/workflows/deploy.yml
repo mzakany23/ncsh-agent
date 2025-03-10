@@ -1,0 +1,161 @@
+name: Deploy NC Soccer Hudson Application
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/**'
+      - 'analysis/**'
+      - '.github/workflows/deploy.yml'
+      - 'terraform/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ui/**'
+      - 'analysis/**'
+      - 'terraform/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # This is required for requesting the JWT
+  contents: read    # This is required for actions/checkout
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv
+          uv pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest -xvs
+
+  setup-oidc:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    outputs:
+      role_arn: ${{ steps.terraform-output.outputs.role_arn }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Configure AWS Credentials for OIDC Setup
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: us-east-2
+          role-to-assume: ${{ secrets.AWS_SETUP_ROLE_ARN }}
+
+      - name: Terraform Init (OIDC setup)
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Apply (OIDC setup)
+        run: |
+          cd terraform
+          terraform apply -auto-approve
+
+      - name: Get Terraform Output
+        id: terraform-output
+        run: |
+          cd terraform
+          echo "role_arn=$(terraform output -raw github_actions_role_arn)" >> $GITHUB_OUTPUT
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, setup-oidc]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ needs.setup-oidc.outputs.role_arn }}
+          aws-region: us-east-2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: |
+          cd terraform/ec2
+          terraform init
+
+      - name: Terraform Apply
+        run: |
+          cd terraform/ec2
+          terraform apply -auto-approve
+        env:
+          TF_VAR_basic_auth_password: ${{ secrets.BASIC_AUTH_PASSWORD }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_key_name: ${{ secrets.AWS_KEY_NAME }}
+          TF_VAR_domain_name: ${{ secrets.DOMAIN_NAME }}
+          TF_VAR_admin_email: ${{ secrets.ADMIN_EMAIL }}
+          TF_VAR_create_new_domain: ${{ secrets.CREATE_NEW_DOMAIN }}
+
+      - name: Get EC2 Host
+        id: get-ec2
+        run: |
+          cd terraform/ec2
+          echo "ec2_host=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ steps.get-ec2.outputs.ec2_host }}
+          username: ec2-user
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            # Clean up any previous deployment
+            rm -rf /home/ec2-user/streamlit-app.tmp
+
+            # Clone the repository to a temporary location
+            git clone https://github.com/${{ github.repository }}.git /home/ec2-user/streamlit-app.tmp
+
+            # Move the app to the correct location
+            sudo rsync -av --delete /home/ec2-user/streamlit-app.tmp/ /home/ec2-user/streamlit-app/
+            sudo chown -R ec2-user:ec2-user /home/ec2-user/streamlit-app
+
+            # Stop and remove existing Docker container if it exists
+            sudo docker stop ncsoccer-ui || true
+            sudo docker rm ncsoccer-ui || true
+
+            # Build and run Docker container
+            cd /home/ec2-user/streamlit-app
+            sudo docker build -t ncsoccer-ui -f ui/Dockerfile .
+            sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+              -p 8501:8501 \
+              -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+              -e BASIC_AUTH_USERNAME=ncsoccer \
+              -e BASIC_AUTH_PASSWORD="${{ secrets.BASIC_AUTH_PASSWORD }}" \
+              -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+              -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+              -e AWS_DEFAULT_REGION="us-east-2" \
+              ncsoccer-ui
+
+            # Ensure Nginx is running
+            sudo systemctl reload nginx
+
+            # Clean up
+            rm -rf /home/ec2-user/streamlit-app.tmp

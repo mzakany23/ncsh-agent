@@ -1,0 +1,25 @@
+# Example terraform.tfvars file
+# Copy this to terraform.tfvars and update with your values
+
+# The name of your SSH key pair in AWS
+key_name = "ncsoccer-key"
+
+# Password for Nginx basic authentication
+basic_auth_password = "your-secure-password-here"
+
+# Anthropic API key
+anthropic_api_key = "your-anthropic-api-key-here"
+
+# Domain and TLS configuration
+enable_domain_and_tls = false  # Set to true to enable domain name and TLS features
+
+# Domain configuration (required if enable_domain_and_tls = true)
+# domain_name = "example.com"
+# create_new_domain = false  # Set to true if you want Terraform to create the Route 53 zone
+# admin_email = "admin@example.com"
+
+# Optional: EC2 instance type (default: t2.micro)
+# instance_type = "t2.small"
+
+# Optional: AMI ID (default: latest Amazon Linux 2)
+# ami_id = "ami-09dc1ba68d413c979"
