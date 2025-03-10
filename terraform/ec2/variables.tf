@@ -1,53 +1,59 @@
 variable "key_name" {
-  description = "The name of the SSH key pair to use for EC2 instance. Must be created in AWS Console first."
+  description = "The name of your SSH key pair in AWS"
   type        = string
   default     = "ncsoccer-key"
 }
 
 variable "basic_auth_password" {
-  description = "Password for Nginx basic authentication. This will be used with username 'ncsoccer'."
+  description = "Password for basic authentication"
   type        = string
   sensitive   = true
 }
 
 variable "anthropic_api_key" {
-  description = "API key for Anthropic Claude. Required for the Streamlit application to function."
+  description = "API key for Anthropic Claude"
   type        = string
   sensitive   = true
 }
 
 variable "instance_type" {
-  description = "EC2 instance type to use. Default is t2.micro (free tier eligible)."
+  description = "EC2 instance type"
   type        = string
   default     = "t2.micro"
 }
 
 variable "ami_id" {
-  description = "AMI ID to use. If not specified, defaults to the latest Amazon Linux 2 AMI."
+  description = "AMI ID to use for the EC2 instance (default: latest Amazon Linux 2)"
   type        = string
-  default     = "ami-09dc1ba68d413c979"  # Amazon Linux 2 in us-east-2 (Ohio)
+  default     = "ami-09dc1ba68d413c979" # Amazon Linux 2 AMI (HVM) - Kernel 5.10, SSD Volume Type
 }
 
 variable "enable_domain_and_tls" {
-  description = "Whether to enable domain name and TLS features (Route53, ACM, Let's Encrypt)"
+  description = "Whether to enable domain name and TLS support"
   type        = bool
   default     = false
 }
 
 variable "domain_name" {
-  description = "Domain name for the application (e.g., example.com). Required if enable_domain_and_tls is true."
+  description = "Domain name for the application"
   type        = string
   default     = ""
 }
 
 variable "create_new_domain" {
-  description = "Whether to create a new Route 53 hosted zone or use an existing one"
+  description = "Whether to create a new Route 53 hosted zone (if false, uses existing zone)"
   type        = bool
   default     = false
 }
 
+variable "route53_zone_id" {
+  description = "Existing Route 53 zone ID to use (optional, used if multiple zones exist for domain)"
+  type        = string
+  default     = ""
+}
+
 variable "admin_email" {
-  description = "Email address for Let's Encrypt certificate notifications. Required if enable_domain_and_tls is true."
+  description = "Email address for Let's Encrypt certificate notifications"
   type        = string
   default     = ""
 }
