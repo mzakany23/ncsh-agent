@@ -477,27 +477,10 @@ def find_datasets():
     default_dataset_name = "Main Dataset (default)"
     default_added = False
 
-    # Check the ui/data directory first (most likely to have user-created datasets)
-    ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
-    if os.path.exists(ui_data_dir):
-        for file in os.listdir(ui_data_dir):
-            if file.endswith('.parquet'):
-                filename = os.path.basename(file)
-                # Skip if we've already seen this filename
-                if filename in seen_filenames:
-                    continue
-
-                # Handle the main dataset specially
-                if filename == 'data.parquet' and not default_added:
-                    datasets.append((os.path.join(ui_data_dir, file), default_dataset_name))
-                    default_added = True
-                else:
-                    datasets.append((os.path.join(ui_data_dir, file), filename))
-                seen_filenames.add(filename)
-
-    # Check the analysis/data directory
+    # Check the analysis/data directory FIRST (our single source of truth)
     analysis_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis', 'data')
     if os.path.exists(analysis_data_dir):
+        logger.info(f"Checking for datasets in: {analysis_data_dir}")
         for file in os.listdir(analysis_data_dir):
             if file.endswith('.parquet'):
                 filename = os.path.basename(file)
@@ -512,8 +495,30 @@ def find_datasets():
                 else:
                     datasets.append((os.path.join(analysis_data_dir, file), filename))
                 seen_filenames.add(filename)
+        logger.info(f"Found {len(datasets)} datasets in analysis/data")
 
-    # Check for datasets in the current directory
+    # Check the ui/data directory as a fallback
+    ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
+    if os.path.exists(ui_data_dir):
+        logger.info(f"Checking for datasets in: {ui_data_dir}")
+        for file in os.listdir(ui_data_dir):
+            if file.endswith('.parquet'):
+                filename = os.path.basename(file)
+                # Skip if we've already seen this filename
+                if filename in seen_filenames:
+                    continue
+
+                # Handle the main dataset specially
+                if filename == 'data.parquet' and not default_added:
+                    datasets.append((os.path.join(ui_data_dir, file), default_dataset_name))
+                    default_added = True
+                else:
+                    datasets.append((os.path.join(ui_data_dir, file), filename))
+                seen_filenames.add(filename)
+        logger.info(f"Found {len(datasets)} datasets in ui/data")
+
+    # Check for datasets in the current directory (least priority)
+    logger.info(f"Checking for datasets in current directory: {os.getcwd()}")
     for file in os.listdir('.'):
         if file.endswith('.parquet'):
             filename = os.path.basename(file)
@@ -529,6 +534,8 @@ def find_datasets():
                 datasets.append((file, filename))
             seen_filenames.add(filename)
 
+    logger.info(f"Found {len(datasets)} total datasets")
+
     # Sort datasets to ensure consistent order (default first, then alphabetical)
     datasets.sort(key=lambda x: "" if x[1] == default_dataset_name else x[1])
 
@@ -541,18 +548,28 @@ def find_datasets():
 
     return datasets
 
-# Function to create a dataset using create_llm_dataset
-def create_dataset(instructions, format="table"):
+# Function to extract team name and time period from instructions
+def extract_team_and_time(instructions):
+    """
+    Extract team name and time period from natural language instructions.
+
+    Args:
+        instructions: Natural language instructions for creating a dataset
+
+    Returns:
+        Tuple of (team_name, time_period) - both could be None if extraction fails
+    """
+    from analysis.tools.claude_tools import create_llm_dataset
+    from analysis.tools.claude_tools import fuzzy_match_teams
+
+    # Parse the instructions to extract team name and time period
+    # Use Claude to help with entity extraction
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY environment variable is not set.")
+        return None, None
+
     try:
-        from analysis.tools.claude_tools import create_llm_dataset
-        from analysis.tools.claude_tools import fuzzy_match_teams
-
-        # Parse the instructions to extract team name and time period
-        # Use Claude to help with entity extraction
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            return None, "ANTHROPIC_API_KEY environment variable is not set."
-
         client = anthropic.Anthropic(api_key=api_key)
 
         # Get Claude to extract entities from the instructions
@@ -608,142 +625,244 @@ def create_dataset(instructions, format="table"):
             team = instructions
             time_period = None
 
-        if not team:
-            return None, "Could not extract team name from instructions"
+        # Use fuzzy matching to get the exact team name from the database if found
+        if team:
+            source_parquet_file = st.session_state.default_parquet_path
+            match_result = fuzzy_match_teams(team, parquet_file=source_parquet_file)
+            if not "error" in match_result and match_result.get("matches"):
+                # Use the highest confidence match
+                team = match_result["matches"][0]["team_name"]
+                logger.info(f"Fuzzy matched team name: {team}")
 
-        # Get the default parquet file from session state
+        return team, time_period
+
+    except Exception as e:
+        logger.error(f"Error extracting team and time period: {e}")
+        logger.error(traceback.format_exc())
+        return None, None
+
+# Function to create a dataset using create_llm_dataset
+def create_dataset(instructions, format="compact"):
+    """
+    Create a dataset based on natural language instructions.
+    Uses Claude's agent capabilities to interpret the request and create appropriate datasets.
+    Always uses 'compact' format regardless of the format parameter for consistency.
+
+    Args:
+        instructions: Natural language instructions for creating a dataset
+        format: Format parameter (ignored, always uses 'compact')
+
+    Returns:
+        Tuple of (dataset_context, error_message)
+    """
+    try:
+        # Extract team name and optional time period from instructions
+        team, time_period = extract_team_and_time(instructions)
+
+        if not team:
+            return None, "Could not extract team name from instructions. Please specify a team name."
+
+        # Source parquet file (default dataset)
         source_parquet_file = st.session_state.default_parquet_path
 
-        # Use fuzzy matching to get the exact team name from the database
-        match_result = fuzzy_match_teams(team, parquet_file=source_parquet_file)
-        if "error" in match_result:
-            return None, match_result["error"]
+        # Store the dataset display name in session state
+        display_name = f"{team}{' ' + time_period if time_period else ''}"
+        st.session_state.dataset_name = display_name
 
-        if match_result.get("matches"):
-            # Use the highest confidence match
-            team = match_result["matches"][0]["team_name"]
-            logger.info(f"Fuzzy matched team name: {team}")
+        # Generate a unique, descriptive filename
+        try:
+            # Use a simpler approach to generate a filesystem-friendly filename
+            # that captures the essence of the request
+            safe_team = team.replace(' ', '_').lower()
+            safe_time = f"_{time_period.replace(' ', '_').lower()}" if time_period else ""
 
-        # Create a descriptive dataset name for display and file naming
-        dataset_name = team.replace(' ', '_').lower()
-        if time_period:
-            time_slug = time_period.replace(' ', '_').lower()
-            # Put year first if it's a year for better sorting
-            if time_period.isdigit() and len(time_period) == 4:
-                dataset_name = f"{time_slug}_{dataset_name}"
-            else:
-                dataset_name += f"_{time_slug}"
+            # Extract key intent words from instructions (wins, losses, etc.)
+            key_words = []
+            intent_indicators = ["win", "loss", "bigge", "larges", "high", "low", "draw", "tie"]
+            for word in instructions.lower().split():
+                word = word.strip(",.?!:")
+                if len(word) > 3 and any(indicator in word for indicator in intent_indicators):
+                    key_words.append(word)
 
-        # Store the dataset name in session state
-        st.session_state.dataset_name = f"{team}{' ' + time_period if time_period else ''}"
+            # Create intent part of filename
+            intent_slug = "_".join(key_words[:3]) if key_words else "matches"
 
-        # Construct SQL query with time period filter if provided
-        query = None
-        if time_period:
-            # Map common time period descriptions to SQL expressions
-            time_filters = {
-                "january": "date_part('month', date) = 1",
-                "february": "date_part('month', date) = 2",
-                "march": "date_part('month', date) = 3",
-                "april": "date_part('month', date) = 4",
-                "may": "date_part('month', date) = 5",
-                "june": "date_part('month', date) = 6",
-                "july": "date_part('month', date) = 7",
-                "august": "date_part('month', date) = 8",
-                "september": "date_part('month', date) = 9",
-                "october": "date_part('month', date) = 10",
-                "november": "date_part('month', date) = 11",
-                "december": "date_part('month', date) = 12",
-                "2024": "date_part('year', date) = 2024",
-                "2025": "date_part('year', date) = 2025",
-            }
+            # Add timestamp for uniqueness
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            unique_dataset_name = f"{safe_team}{safe_time}_{intent_slug}_{timestamp}"
+        except Exception as e:
+            logger.error(f"Error generating filename: {e}, using fallback")
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            unique_dataset_name = f"{team.replace(' ', '_').lower()}_{timestamp}"
 
-            # Try to match the time period to our predefined filters
-            time_period_lower = time_period.lower()
-            time_filter = None
+        # Let the agent system handle the dataset creation using the create_llm_dataset tool
+        logger.info(f"Using agent to create dataset for instructions: {instructions}")
 
-            for key, filter_expr in time_filters.items():
-                if key in time_period_lower:
-                    time_filter = filter_expr
-                    break
+        # First, let's get our database schema to help Claude understand the structure
+        # We'll use the default query without any filtering to see what columns are available
+        from analysis.database import DuckDBAnalyzer
+        analyzer = DuckDBAnalyzer(source_parquet_file)
 
-            # If we found a matching filter, create a query with time period constraint
-            if time_filter:
-                query = f"""
-                SELECT
-                    date,
-                    league,
-                    home_team,
-                    away_team,
-                    home_score,
-                    away_score,
-                    CASE
-                        WHEN home_team LIKE '%{team}%' AND home_score > away_score THEN 'win'
-                        WHEN away_team LIKE '%{team}%' AND away_score > home_score THEN 'win'
-                        WHEN home_score = away_score AND home_score IS NOT NULL THEN 'draw'
-                        WHEN home_score IS NULL OR away_score IS NULL THEN 'Not Played'
-                        ELSE 'loss'
-                    END as result
-                FROM input_data
-                WHERE (home_team LIKE '%{team}%' OR away_team LIKE '%{team}%')
-                AND {time_filter}
-                ORDER BY date DESC
-                """
-                logger.info(f"Created query with time filter: {time_filter}")
+        # Get schema information
+        try:
+            schema_info = analyzer.get_schema()
+            schema_text = f"Database Schema Information:\n{schema_info[0]}\n"
+            logger.info(f"Retrieved schema information: {schema_text}")
+        except Exception as e:
+            schema_text = "Schema information unavailable"
+            logger.error(f"Error getting schema: {e}")
 
-        # Define output file path
-        ui_data_dir = os.path.join(os.path.dirname(__file__), 'data')
-        os.makedirs(ui_data_dir, exist_ok=True)
-        output_file = os.path.join(ui_data_dir, f"{dataset_name}_dataset.parquet")
+        # Build a modified system prompt focusing on filtering correctly WITH SCHEMA INFORMATION
+        system_prompt = f"""You are a soccer data analyst specializing in creating datasets.
+        Your task is to interpret the user's instructions and create a dataset that matches exactly what they want.
 
-        # First, use the database module to build a persistent dataset file
-        from analysis.database import build_dataset
+        The instructions are: "{instructions}"
 
-        # Create a SQL query that gets all matches for the team
-        sql_query = query if query else f"""
-        SELECT *
-        FROM input_data
-        WHERE
-            home_team LIKE '%{team}%' OR
-            away_team LIKE '%{team}%'
-        ORDER BY date
+        The dataset should focus on the team: {team}
+        {f"The time period mentioned is: {time_period}" if time_period else ""}
+
+        IMPORTANT DATABASE INFORMATION:
+        - The database table is named 'input_data' (NOT 'matches', 'games', or any other name)
+        - Always use 'input_data' as the table name in your SQL queries
+        - Schema: {schema_text}
+
+        Your job is to create a SQL query that will filter the data according to the instructions.
+        Pay special attention to any filtering conditions like "biggest losses", "wins", "high scoring", etc.
+
+        Return only the SQL query using the 'input_data' table name - DO NOT return any explanations.
         """
 
-        logger.info(f"Creating dataset file at: {output_file}")
+        # Create query using Claude's understanding
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return None, "ANTHROPIC_API_KEY environment variable is not set."
 
-        # Execute the build_dataset function that saves the parquet file
-        build_result = build_dataset(team, source_parquet_file, output_file, custom_query=sql_query)
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=1000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": f"Create a SQL query to filter soccer match data according to these instructions: {instructions}"}]
+            )
 
-        if "error" in build_result:
-            return None, build_result["error"]
+            # Extract the SQL query from the response
+            query = response.content[0].text.strip()
 
-        logger.info(f"Successfully saved dataset to {output_file} with {build_result.get('row_count', 0)} rows")
+            # Clean up query - remove markdown code block markers if present
+            query = re.sub(r'^```sql\s*', '', query)
+            query = re.sub(r'\s*```$', '', query)
+            query = query.strip()
 
-        # Generate the in-memory dataset for context using create_llm_dataset
+            # Ensure the query uses 'input_data' as the table name
+            if "FROM matches" in query:
+                query = query.replace("FROM matches", "FROM input_data")
+            if "from matches" in query:
+                query = query.replace("from matches", "from input_data")
+
+            logger.info(f"Generated query: {query}")
+
+            # Validate the query before using it
+            validation_result = analyzer.validate_query(query)
+            if not validation_result["is_valid"]:
+                logger.error(f"Invalid query: {validation_result['message']}")
+                # Fall back to a simple team filter query
+                query = f"""
+                SELECT *
+                FROM input_data
+                WHERE home_team LIKE '%{team}%' OR away_team LIKE '%{team}%'
+                ORDER BY date DESC
+                """
+                logger.info(f"Using fallback query: {query}")
+
+        except Exception as e:
+            logger.error(f"Error generating query with Claude: {e}")
+            # Fallback to a simple team-based query
+            query = f"""
+            SELECT *
+            FROM input_data
+            WHERE home_team LIKE '%{team}%' OR away_team LIKE '%{team}%'
+            ORDER BY date DESC
+            """
+            logger.info(f"Using fallback query due to error: {query}")
+
+        # Now use the create_llm_dataset function directly to generate the dataset
+        from analysis.tools.claude_tools import create_llm_dataset
+
         result = create_llm_dataset(
-            reasoning=f"Creating a dataset for {team}{' during ' + time_period if time_period else ''} to use in LLM context for chat",
+            reasoning=f"Creating a dataset for '{instructions}'",
             parquet_file=source_parquet_file,
             team=team,
-            query=query,  # Pass the custom query if we have one
-            format=format
+            query=query,  # Use the query generated by Claude if available
+            format="compact"  # Always use compact format for consistency
         )
 
         if "error" in result:
-            return None, result["error"]
+            logger.error(f"Error in create_llm_dataset: {result['error']}")
+            # Try again with a simpler query
+            simple_query = f"""
+            SELECT *
+            FROM input_data
+            WHERE home_team LIKE '%{team}%' OR away_team LIKE '%{team}%'
+            ORDER BY date DESC
+            """
+            logger.info(f"Trying again with simpler query: {simple_query}")
+
+            result = create_llm_dataset(
+                reasoning=f"Creating a dataset for '{instructions}' (retry with simple query)",
+                parquet_file=source_parquet_file,
+                team=team,
+                query=simple_query,  # Use a simple query
+                format="compact"
+            )
+
+            if "error" in result:
+                return None, f"Could not create dataset: {result['error']}"
+
+        # Check if result is small enough to just keep in memory (under 100 matches)
+        row_count = result.get('row_count', 0)
+        create_parquet_file = row_count > 100  # Only create parquet for large datasets
+
+        output_file = None
+        if create_parquet_file:
+            # Save to parquet file for large datasets
+            from analysis.database import build_dataset
+
+            # Define output file path - ALWAYS use analysis/data directory for consistency
+            analysis_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis', 'data')
+            os.makedirs(analysis_data_dir, exist_ok=True)
+            output_file = os.path.join(analysis_data_dir, f"{unique_dataset_name}_dataset.parquet")
+
+            logger.info(f"Creating dataset file at: {output_file}")
+
+            # Use the query that Claude generated
+            build_result = build_dataset(team, source_parquet_file, output_file, custom_query=query)
+
+            if "error" in build_result:
+                return None, build_result["error"]
+
+            logger.info(f"Successfully saved dataset to {output_file} with {build_result.get('row_count', 0)} rows")
 
         # Save the formatted data to the context
         time_info = f" ({time_period})" if time_period else ""
+        description = unique_dataset_name.replace('_', ' ').title().split(' ' + timestamp.replace('_', ' '))[0]
+
         dataset_context = f"""
-# {team}{time_info} Team Dataset
+# {team}{time_info} Dataset: {description}
 
 {result.get('data', '')}
 
 ## Summary
 - Total matches: {result.get('row_count', 'Unknown')}
 - Dataset generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Team name: {team}{time_info if time_period else ''}
-- Dataset file: {os.path.basename(output_file)}
+- Team: {team}{time_info if time_period else ''}
+- Instructions: "{instructions}"
         """
+
+        if output_file:
+            dataset_context += f"\n- Dataset file: {os.path.basename(output_file)}"
+        else:
+            dataset_context += "\n- Dataset stored in memory only (compact format)"
 
         return dataset_context, None
     except Exception as e:
@@ -968,14 +1087,13 @@ st.sidebar.title("🗃️ Dataset Management")
 # Dataset creation section
 st.sidebar.subheader("Create New Dataset")
 dataset_instructions = st.sidebar.text_input("Instructions", value="", help="Enter instructions like 'Create a 2025 Key West dataset' or 'Internazionale matches in January'")
-format_options = ["table", "compact", "simple"]
-selected_format = st.sidebar.selectbox("Format", format_options, help="Select the format for the dataset")
 
 if st.sidebar.button("Create Dataset"):
     if dataset_instructions:
         with st.sidebar.status("Creating dataset..."):
             # Use the default parquet file as the source for creating datasets
-            dataset_context, error = create_dataset(dataset_instructions, selected_format)
+            # Always use the "compact" format which works best
+            dataset_context, error = create_dataset(dataset_instructions, format="compact")
             if error:
                 st.sidebar.error(f"Error creating dataset: {error}")
             else:
@@ -1003,11 +1121,23 @@ if datasets:
         if name != "Main Dataset (default)":
             # Strip off _dataset.parquet and make it more readable
             display_name = name.replace('_dataset.parquet', '').replace('_', ' ').title()
+
+            # Remove timestamp component (YYYYMMDD_HHMMSS) if present
+            timestamp_pattern = r'_\d{8}_\d{6}'
+            display_name = re.sub(timestamp_pattern, '', display_name)
+
             # Handle year prefixes specially (e.g., "2025_key_west" -> "Key West (2025)")
-            year_match = re.match(r'(\d{4})_(.*)', display_name)
+            year_match = re.match(r'(\d{4})[\s_]+(.*)', display_name)
             if year_match:
                 year, team = year_match.groups()
-                display_name = f"{team} ({year})"
+                display_name = f"{team.strip()} ({year})"
+
+            # Make other time periods more readable
+            month_match = re.search(r'(.*?)\s+(January|February|March|April|May|June|July|August|September|October|November|December)$', display_name, re.IGNORECASE)
+            if month_match:
+                team, month = month_match.groups()
+                display_name = f"{team.strip()} ({month.title()})"
+
             display_names.append(display_name)
         else:
             display_names.append(name)
