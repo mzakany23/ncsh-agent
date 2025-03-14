@@ -2,13 +2,31 @@
 
 ## Overview
 
-This document outlines the process for deploying the NC Soccer Hudson application using the tag-based deployment strategy.
+This document outlines the process for deploying the NC Soccer Hudson application using our CI/CD pipeline strategy.
+
+We have a two-stage pipeline:
+1. **CI Pipeline**: Runs on all merges to the `main` branch (not on feature branches)
+2. **Deployment Pipeline**: Only runs when a version tag is pushed
 
 The key benefits of this approach:
 
 1. **Controlled Deployments**: Deployments only occur when explicitly triggered by a new tag, not automatically on every push to `main`.
 2. **Versioned Releases**: Each deployment is tied to a specific version in the CHANGELOG.md.
 3. **Minimal Disruption**: The deployment process avoids rebuilding Docker containers unnecessarily, using SSH to pull new code and restart services.
+4. **Quality Control**: Tests run on all PRs and merges to main, but deployments are a separate manual step.
+
+## CI Pipeline
+
+The CI pipeline runs automatically in two scenarios:
+- When a pull request is opened against the `main` branch
+- When changes are merged to the `main` branch
+
+This pipeline:
+1. Runs tests to verify code quality
+2. Builds the application (only on merges to `main`, not on PRs)
+3. Verifies deployment readiness
+
+The CI pipeline does not deploy to production. To deploy to production, you must create and push a tag.
 
 ## Deployment Process
 
