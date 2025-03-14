@@ -74,10 +74,16 @@ else \n\
 fi \n\
 # Run the data refresh command \n\
 cd /app && make refresh-data || echo "Failed to refresh data from S3" \n\
-# Copy the sample.parquet to data.parquet for compatibility if it exists \n\
-if [ -f "/app/analysis/data/sample.parquet" ]; then \n\
-    cp /app/analysis/data/sample.parquet /app/analysis/data/data.parquet \n\
-    echo "Data refreshed and copied to data.parquet" \n\
+# Ensure data.parquet exists in both locations for compatibility \n\
+if [ -f "/app/analysis/data/data.parquet" ]; then \n\
+    mkdir -p /app/ui/data \n\
+    cp /app/analysis/data/data.parquet /app/ui/data/data.parquet \n\
+    echo "Data refreshed and copied to UI data directory" \n\
+    # Also copy any additional datasets found \n\
+    echo "Copying additional datasets to UI data directory..." \n\
+    find /app/analysis/data -name "*.parquet" ! -name "data.parquet" -exec cp {} /app/ui/data/ \\; \n\
+    echo "Listing all available datasets:" \n\
+    find /app/ui/data -name "*.parquet" | sort \n\
 fi \n\
 \n\
 # Start Nginx \n\
