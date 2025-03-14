@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.2.0] - 2023-06-15
+
+### Added
+- Tag-based deployment process for more controlled releases
+- New release.sh script to automate version tagging
+- Comprehensive deployment documentation
+
+### Changed
+- Simplified dataset creation UI by removing format selection
+- Standardized dataset format to use "compact" format for better performance
+- Updated CI/CD workflow to trigger deployments only on tags
+
+### Fixed
+- Issue with "table" format not working properly in dataset creation
+- Inconsistent behavior when creating and selecting datasets
+
 ## [0.1.0] - 2023-08-04
 
 ### Added
