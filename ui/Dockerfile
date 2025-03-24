@@ -23,7 +23,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 RUN mkdir -p /app/memory
 
 # Create directory for data
-RUN mkdir -p /app/analysis/data
+RUN mkdir -p /app/analysis/data /app/ui/data
 
 # Install dependencies directly
 RUN pip install --no-cache-dir streamlit anthropic pandas llama-index duckdb matplotlib rich pytest numpy uv
@@ -72,18 +72,24 @@ elif curl -s -m 1 http://169.254.169.254/latest/meta-data/iam/security-credentia
 else \n\
     echo "No AWS credentials available. Sync may fail if AWS credentials are required." \n\
 fi \n\
+\n\
 # Run the data refresh command \n\
 cd /app && make refresh-data || echo "Failed to refresh data from S3" \n\
+\n\
 # Ensure data.parquet exists in both locations for compatibility \n\
 if [ -f "/app/analysis/data/data.parquet" ]; then \n\
-    mkdir -p /app/ui/data \n\
+    echo "Data refreshed and copying to UI data directory..." \n\
     cp /app/analysis/data/data.parquet /app/ui/data/data.parquet \n\
-    echo "Data refreshed and copied to UI data directory" \n\
+    echo "Data copied to UI data directory" \n\
+    \n\
     # Also copy any additional datasets found \n\
     echo "Copying additional datasets to UI data directory..." \n\
     find /app/analysis/data -name "*.parquet" ! -name "data.parquet" -exec cp {} /app/ui/data/ \\; \n\
     echo "Listing all available datasets:" \n\
     find /app/ui/data -name "*.parquet" | sort \n\
+else \n\
+    echo "ERROR: No data.parquet file found after refresh. Please check S3 path and credentials." \n\
+    exit 1 \n\
 fi \n\
 \n\
 # Start Nginx \n\

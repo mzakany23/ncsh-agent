@@ -102,7 +102,19 @@ Ensure your responses are accurate, comprehensive, and provide valuable insights
 
     # Initialize message history or use provided history
     if conversation_history:
-        messages = conversation_history
+        # If conversation_history is a string, convert it to the proper format
+        if isinstance(conversation_history, str):
+            messages = [
+                {"role": "user", "content": [{"type": "text", "text": question}]}
+            ]
+        # If it's already a list of messages, use it directly
+        elif isinstance(conversation_history, list):
+            messages = conversation_history
+        else:
+            # Default case if conversation_history is in an unexpected format
+            messages = [
+                {"role": "user", "content": [{"type": "text", "text": question}]}
+            ]
     else:
         messages = [
             {"role": "user", "content": [{"type": "text", "text": question}]}
