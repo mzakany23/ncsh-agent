@@ -144,7 +144,8 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+          # Using hardcoded EC2 host address since there's no secret for it
+          ssh-keyscan ec2-18-218-9-77.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts
 
       - name: Deploy to server
         run: |
@@ -152,8 +153,8 @@ jobs:
           echo "Deploying version $VERSION to production server"
 
           # Connect via SSH and execute deployment commands
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
-            cd /path/to/ncsoccer-agent
+          ssh ec2-user@ec2-18-218-9-77.us-east-2.compute.amazonaws.com << 'EOF'
+            cd /home/ec2-user/ncsoccer-agent
 
             # Pull the latest code for the tag
             git fetch --all --tags
