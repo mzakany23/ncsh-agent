@@ -26,7 +26,7 @@ Deployment is triggered ONLY by creating a version tag. Merging to main does NOT
    git push origin v0.3.0
    ```
 
-3. The GitHub Actions workflow (.github/workflows/deploy.yml) will:
+3. The GitHub Actions workflow (.github/workflows/ncsoccer-pipeline.yml) will:
    - Verify the tag exists in CHANGELOG.md
    - Deploy to the EC2 server by:
      - Checking out the specific tagged version
