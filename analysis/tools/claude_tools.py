@@ -47,6 +47,405 @@ console = Console()
 # Global variables for storing results between tool calls
 _last_fuzzy_match_result = None
 
+# Cache for fuzzy match results to avoid redundant calls
+_fuzzy_match_cache = {}
+
+
+# Simplified approach functions
+def find_team_variations(team_name: str, parquet_file: str = "analysis/data/data.parquet") -> List[str]:
+    """Find all variations of a team name in the database."""
+    console.log(f"Finding variations for '{team_name}'...")
+    
+    # Load the data
+    df = pd.read_parquet(parquet_file)
+    
+    # Get all unique team names
+    all_teams = set()
+    if 'home_team' in df.columns:
+        all_teams.update(df['home_team'].dropna().unique())
+    if 'away_team' in df.columns:
+        all_teams.update(df['away_team'].dropna().unique())
+    
+    # Find variations based on substring matching
+    team_name_lower = team_name.lower()
+    variations = [team for team in all_teams if team_name_lower in team.lower()]
+    
+    console.log(f"Found {len(variations)} variations: {variations}")
+    return variations
+
+def find_games_for_period(team_variations: List[str], start_date: str, end_date: str, 
+                         parquet_file: str = "analysis/data/data.parquet") -> List[Dict]:
+    """Find all games for the given team variations within the date range."""
+    console.log(f"Finding games from {start_date} to {end_date}...")
+    
+    # Load the data
+    df = pd.read_parquet(parquet_file)
+    
+    # Convert dates to datetime if needed
+    if df['date'].dtype != 'datetime64[ns]':
+        df['date'] = pd.to_datetime(df['date'])
+    
+    # Convert input dates to datetime
+    start_dt = pd.to_datetime(start_date)
+    end_dt = pd.to_datetime(end_date)
+    
+    # Filter by date range
+    date_mask = (df['date'] >= start_dt) & (df['date'] <= end_dt)
+    date_filtered = df[date_mask]
+    
+    # Find games for all team variations
+    all_games = []
+    
+    for team in team_variations:
+        # Find games where the team is either home or away
+        home_mask = date_filtered['home_team'] == team
+        away_mask = date_filtered['away_team'] == team
+        team_games = date_filtered[home_mask | away_mask]
+        
+        # Convert to list of dictionaries
+        for _, game in team_games.iterrows():
+            game_dict = {
+                'Date': game['date'].strftime('%Y-%m-%d'),
+                'Time': game['time'] if 'time' in game else 'Unknown',
+                'HomeTeam': game['home_team'],
+                'AwayTeam': game['away_team'],
+                'League': game['league'] if 'league' in game else 'Unknown',
+                'HomeScore': game['home_score'] if 'home_score' in game and pd.notna(game['home_score']) else None,
+                'AwayScore': game['away_score'] if 'away_score' in game and pd.notna(game['away_score']) else None,
+                'IsUpcoming': pd.isna(game['home_score']) if 'home_score' in game else True
+            }
+            all_games.append(game_dict)
+    
+    # Remove duplicates
+    unique_games = []
+    seen = set()
+    
+    for game in all_games:
+        # Create a key that uniquely identifies a game
+        game_key = f"{game['Date']}-{game['HomeTeam']}-{game['AwayTeam']}"
+        
+        if game_key not in seen:
+            seen.add(game_key)
+            unique_games.append(game)
+    
+    console.log(f"Found {len(unique_games)} unique games")
+    return unique_games
+
+def format_games_response(games: List[Dict], team_name: str, time_period: str) -> str:
+    """Format the games into a readable response."""
+    if not games:
+        return f"No {team_name} games found for {time_period}."
+    
+    # Split into upcoming and past games
+    upcoming_games = [g for g in games if g.get('IsUpcoming', True)]
+    past_games = [g for g in games if not g.get('IsUpcoming', True)]
+    
+    response = f"# {team_name} Games for {time_period}\n\n"
+    
+    if upcoming_games:
+        response += f"## Upcoming Games ({len(upcoming_games)})\n\n"
+        for game in upcoming_games:
+            response += f"- **{game['Date']}** at {game['Time']}: "
+            response += f"{game['HomeTeam']} vs {game['AwayTeam']} ({game['League']})\n"
+    
+    if past_games:
+        response += f"\n## Completed Games ({len(past_games)})\n\n"
+        for game in past_games:
+            score_str = f"{game['HomeScore']}-{game['AwayScore']}" if game['HomeScore'] is not None else "Score not recorded"
+            response += f"- **{game['Date']}** at {game['Time']}: "
+            response += f"{game['HomeTeam']} vs {game['AwayTeam']} ({score_str}, {game['League']})\n"
+    
+    return response
+
+# Enhanced analysis tools
+
+def get_cached_dataframe(parquet_file: str) -> pd.DataFrame:
+    """Get a cached dataframe or load it if not in cache."""
+    global _dataframe_cache
+    if '_dataframe_cache' not in globals():
+        _dataframe_cache = {}
+        
+    if parquet_file not in _dataframe_cache:
+        console.log(f"Loading dataframe from {parquet_file} (not in cache)")
+        _dataframe_cache[parquet_file] = pd.read_parquet(parquet_file)
+    else:
+        console.log(f"Using cached dataframe for {parquet_file}")
+    return _dataframe_cache[parquet_file]
+
+def analyze_team_performance(team_variations: List[str], start_date: str, end_date: str, 
+                           parquet_file: str = "analysis/data/data.parquet") -> Dict:
+    """Analyze team performance metrics for the given period."""
+    games = find_games_for_period(team_variations, start_date, end_date, parquet_file)
+    
+    # Filter to only completed games
+    completed_games = [g for g in games if not g.get('IsUpcoming', True)]
+    
+    # Calculate performance metrics
+    total_games = len(completed_games)
+    if total_games == 0:
+        return {"error": "No completed games found for analysis"}
+        
+    wins = 0
+    losses = 0
+    draws = 0
+    goals_for = 0
+    goals_against = 0
+    
+    for game in completed_games:
+        is_home = any(team in game['HomeTeam'] for team in team_variations)
+        team_score = game['HomeScore'] if is_home else game['AwayScore']
+        opponent_score = game['AwayScore'] if is_home else game['HomeScore']
+        
+        if team_score > opponent_score:
+            wins += 1
+        elif team_score < opponent_score:
+            losses += 1
+        else:
+            draws += 1
+            
+        goals_for += team_score
+        goals_against += opponent_score
+    
+    return {
+        "total_games": total_games,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "win_percentage": round(wins / total_games * 100, 2) if total_games > 0 else 0,
+        "goals_for": goals_for,
+        "goals_against": goals_against,
+        "goal_difference": goals_for - goals_against,
+        "average_goals_scored": round(goals_for / total_games, 2) if total_games > 0 else 0,
+        "average_goals_conceded": round(goals_against / total_games, 2) if total_games > 0 else 0
+    }
+
+def analyze_opponents(team_variations: List[str], start_date: str, end_date: str,
+                    parquet_file: str = "analysis/data/data.parquet") -> Dict:
+    """Analyze the team's performance against different opponents."""
+    games = find_games_for_period(team_variations, start_date, end_date, parquet_file)
+    
+    # Group by opponent
+    opponent_stats = {}
+    
+    for game in games:
+        is_home = any(team in game['HomeTeam'] for team in team_variations)
+        opponent = game['AwayTeam'] if is_home else game['HomeTeam']
+        
+        if opponent not in opponent_stats:
+            opponent_stats[opponent] = {
+                "played": 0, "wins": 0, "losses": 0, "draws": 0,
+                "goals_for": 0, "goals_against": 0
+            }
+        
+        # Only count completed games for stats
+        if game.get('HomeScore') is not None and game.get('AwayScore') is not None:
+            team_score = game['HomeScore'] if is_home else game['AwayScore']
+            opponent_score = game['AwayScore'] if is_home else game['HomeScore']
+            
+            opponent_stats[opponent]["played"] += 1
+            
+            if team_score > opponent_score:
+                opponent_stats[opponent]["wins"] += 1
+            elif team_score < opponent_score:
+                opponent_stats[opponent]["losses"] += 1
+            else:
+                opponent_stats[opponent]["draws"] += 1
+                
+            opponent_stats[opponent]["goals_for"] += team_score
+            opponent_stats[opponent]["goals_against"] += opponent_score
+    
+    return opponent_stats
+
+def analyze_trends(team_variations: List[str], start_date: str, end_date: str,
+                 parquet_file: str = "analysis/data/data.parquet") -> Dict:
+    """Analyze trends over time for the specified team."""
+    games = find_games_for_period(team_variations, start_date, end_date, parquet_file)
+    
+    # Sort games by date
+    completed_games = [g for g in games if not g.get('IsUpcoming', True)]
+    completed_games.sort(key=lambda x: x['Date'])
+    
+    # Calculate running form (last 5 games)
+    form = []
+    running_goals = []
+    
+    for i, game in enumerate(completed_games):
+        is_home = any(team in game['HomeTeam'] for team in team_variations)
+        team_score = game['HomeScore'] if is_home else game['AwayScore']
+        opponent_score = game['AwayScore'] if is_home else game['HomeScore']
+        
+        if team_score > opponent_score:
+            result = "W"
+        elif team_score < opponent_score:
+            result = "L"
+        else:
+            result = "D"
+            
+        form.append(result)
+        running_goals.append(team_score)
+        
+        # Keep only last 5 results for form
+        if len(form) > 5:
+            form.pop(0)
+            
+    return {
+        "recent_form": "".join(form[-5:]),
+        "form_trend": form,
+        "goal_trend": running_goals,
+        "average_recent_goals": round(sum(running_goals[-5:]) / min(5, len(running_goals)), 2) if running_goals else 0
+    }
+
+def estimate_league_position(team_variations: List[str], league_name: str, 
+                           parquet_file: str = "analysis/data/data.parquet") -> Dict:
+    """Estimate the team's position in their league based on performance."""
+    # Get current date
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Get all teams in the league
+    df = get_cached_dataframe(parquet_file)
+    league_mask = df['league'] == league_name
+    league_df = df[league_mask]
+    
+    # Get unique teams in this league
+    all_teams = set()
+    all_teams.update(league_df['home_team'].dropna().unique())
+    all_teams.update(league_df['away_team'].dropna().unique())
+    
+    # Calculate points for each team
+    team_points = {}
+    
+    for team in all_teams:
+        home_games = league_df[league_df['home_team'] == team]
+        away_games = league_df[league_df['away_team'] == team]
+        
+        points = 0
+        games_played = 0
+        
+        # Home games
+        for _, game in home_games.iterrows():
+            if pd.notna(game['home_score']) and pd.notna(game['away_score']):
+                games_played += 1
+                if game['home_score'] > game['away_score']:
+                    points += 3
+                elif game['home_score'] == game['away_score']:
+                    points += 1
+        
+        # Away games
+        for _, game in away_games.iterrows():
+            if pd.notna(game['home_score']) and pd.notna(game['away_score']):
+                games_played += 1
+                if game['away_score'] > game['home_score']:
+                    points += 3
+                elif game['away_score'] == game['home_score']:
+                    points += 1
+        
+        if games_played > 0:
+            team_points[team] = {
+                "points": points,
+                "games_played": games_played,
+                "points_per_game": round(points / games_played, 2)
+            }
+    
+    # Sort teams by points
+    sorted_teams = sorted(team_points.items(), key=lambda x: (x[1]["points"], x[1]["points_per_game"]), reverse=True)
+    
+    # Find our team's position
+    team_position = None
+    for i, (team, _) in enumerate(sorted_teams):
+        if any(variation in team for variation in team_variations):
+            team_position = i + 1
+            break
+    
+    return {
+        "league": league_name,
+        "position": team_position,
+        "total_teams": len(sorted_teams),
+        "points": team_points.get(team_variations[0], {}).get("points", 0) if team_variations else 0,
+        "games_played": team_points.get(team_variations[0], {}).get("games_played", 0) if team_variations else 0,
+        "league_table": sorted_teams[:5]  # Top 5 teams
+    }
+
+def format_performance_response(performance_data: Dict, team_name: str, time_period: str) -> str:
+    """Format performance data into a readable response."""
+    if "error" in performance_data:
+        return f"Unable to analyze {team_name}'s performance for {time_period}: {performance_data['error']}"
+    
+    response = f"# {team_name} Performance Analysis for {time_period}\n\n"
+    
+    response += "## Overall Record\n"
+    response += f"- **Games Played**: {performance_data['total_games']}\n"
+    response += f"- **Wins**: {performance_data['wins']}\n"
+    response += f"- **Losses**: {performance_data['losses']}\n"
+    response += f"- **Draws**: {performance_data['draws']}\n"
+    response += f"- **Win Percentage**: {performance_data['win_percentage']}%\n\n"
+    
+    response += "## Goal Statistics\n"
+    response += f"- **Goals Scored**: {performance_data['goals_for']} (avg {performance_data['average_goals_scored']} per game)\n"
+    response += f"- **Goals Conceded**: {performance_data['goals_against']} (avg {performance_data['average_goals_conceded']} per game)\n"
+    response += f"- **Goal Difference**: {performance_data['goal_difference']}\n"
+    
+    return response
+
+def format_opponent_response(opponent_data: Dict, team_name: str) -> str:
+    """Format opponent analysis data into a readable response."""
+    if not opponent_data:
+        return f"No opponent data available for {team_name}."
+    
+    response = f"# {team_name}'s Performance Against Opponents\n\n"
+    
+    # Sort opponents by games played
+    sorted_opponents = sorted(opponent_data.items(), key=lambda x: x[1]["played"], reverse=True)
+    
+    for opponent, stats in sorted_opponents:
+        if stats["played"] > 0:
+            win_pct = round((stats["wins"] / stats["played"]) * 100, 1) if stats["played"] > 0 else 0
+            response += f"## vs {opponent}\n"
+            response += f"- **Record**: {stats['wins']}W {stats['losses']}L {stats['draws']}D ({win_pct}% win rate)\n"
+            response += f"- **Goals**: Scored {stats['goals_for']}, Conceded {stats['goals_against']} (Diff: {stats['goals_for'] - stats['goals_against']})\n\n"
+    
+    return response
+
+def format_trend_response(trend_data: Dict, team_name: str) -> str:
+    """Format trend analysis data into a readable response."""
+    if not trend_data.get("form_trend"):
+        return f"No trend data available for {team_name}."
+    
+    response = f"# {team_name}'s Form Analysis\n\n"
+    
+    response += "## Recent Form\n"
+    response += f"- **Last {len(trend_data['form_trend'])} games**: {trend_data['recent_form']}\n"
+    response += f"- **Average recent goals scored**: {trend_data['average_recent_goals']} per game\n\n"
+    
+    response += "## Form Breakdown\n"
+    wins = trend_data["form_trend"].count("W")
+    losses = trend_data["form_trend"].count("L")
+    draws = trend_data["form_trend"].count("D")
+    
+    response += f"- **Wins**: {wins} ({round(wins/len(trend_data['form_trend'])*100, 1)}%)\n"
+    response += f"- **Losses**: {losses} ({round(losses/len(trend_data['form_trend'])*100, 1)}%)\n"
+    response += f"- **Draws**: {draws} ({round(draws/len(trend_data['form_trend'])*100, 1)}%)\n"
+    
+    return response
+
+def format_league_position_response(position_data: Dict, team_name: str) -> str:
+    """Format league position data into a readable response."""
+    if "error" in position_data:
+        return f"Unable to determine {team_name}'s league position: {position_data['error']}"
+    
+    response = f"# {team_name}'s League Standing\n\n"
+    
+    if position_data["position"]:
+        response += f"## {position_data['league']}\n"
+        response += f"- **Current Position**: {position_data['position']} of {position_data['total_teams']}\n"
+        response += f"- **Points**: {position_data['points']} from {position_data['games_played']} games\n\n"
+        
+        response += "## Top Teams in League\n"
+        for i, (team, stats) in enumerate(position_data["league_table"]):
+            response += f"{i+1}. **{team}**: {stats['points']} pts from {stats['games_played']} games ({stats['points_per_game']} ppg)\n"
+    else:
+        response += f"Could not determine {team_name}'s position in {position_data['league']}."
+    
+    return response
 def complete_task(reasoning: str) -> Dict:
     """
     Tool for finalizing task and providing the final response.
@@ -782,6 +1181,32 @@ def get_claude_tools() -> List[Dict]:
             }
         },
         {
+            "name": "get_scheduled_games",
+            "description": "Retrieve scheduled games for a specific team within a date range. This tool handles all date range logic internally and considers a game 'scheduled' if it's in the future or has no score recorded.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "team_name": {
+                        "type": "string",
+                        "description": "The team name to find scheduled games for"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start date in YYYY-MM-DD format (defaults to today if not provided)"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format (defaults to 7 days from today if not provided)"
+                    },
+                    "parquet_file": {
+                        "type": "string",
+                        "description": "Path to the Parquet file, default: 'analysis/data/data.parquet'"
+                    }
+                },
+                "required": ["team_name"]
+            }
+        },
+        {
             "name": "execute_team_comparison",
             "description": "Execute a structured comparison between two soccer teams for a specific time period by running SQL queries and collecting comprehensive data",
             "input_schema": {
@@ -1026,7 +1451,7 @@ def tool_select_tool(tool_input: Dict) -> Dict:
     query = tool_input.get("query", "")
     return select_tool(query)
 
-def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_file: str = "analysis/data/data.parquet") -> Dict:
+def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_file: str = "analysis/data/data.parquet", use_cache: bool = True) -> Dict:
     """
     Performs fuzzy matching to find the most likely team names in the database that match
     what was mentioned in the query. Also resolves time references like "last year".
@@ -1039,6 +1464,31 @@ def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_fil
     Returns:
         Dictionary with matched teams and resolved time periods
     """
+    global _last_fuzzy_match_result
+    global _fuzzy_match_cache, _last_fuzzy_match_result
+    
+    # Check cache first if enabled
+    cache_key = f"{query}:{parquet_file}"
+    if use_cache and cache_key in _fuzzy_match_cache:
+        console.log(f"[fuzzy_match_teams] Using cached result for query: {query}")
+        result = _fuzzy_match_cache[cache_key]
+        _last_fuzzy_match_result = result
+        # Format the result as a string
+        result_str = "Fuzzy Team Matching Results:\n\n"
+        
+        # Add team matches
+        for team, match in result.get("team_matches", {}).items():
+            result_str += f"• '{team}' → '{match['team']}' (confidence: {match['confidence']:.2f})\n"
+        
+        # Add time reference resolution if available
+        if "time_references" in result and result["time_references"]:
+            result_str += "\nTime Reference Resolution:\n\n"
+            for ref, time_range in result["time_references"].items():
+                result_str += f"• '{ref}' → {time_range.get('resolved_time', '')}\n"
+                result_str += f"  Period: {time_range.get('start_date', '')} to {time_range.get('end_date', '')}\n"
+        
+        return {"result": result_str}
+    
     try:
         console.log(f"[fuzzy_match_teams] Analyzing query: {query}")
 
@@ -1141,42 +1591,93 @@ def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_fil
         console.log(f"[fuzzy_match_teams] Extracted potential teams: {potential_teams}")
         console.log(f"[fuzzy_match_teams] Extracted time references: {time_references}")
 
-        # For each potential team, find the closest match in the database
+        # For each potential team, find all matching variations in the database
         matched_teams = {}
         for team in potential_teams:
-            # Perform fuzzy matching
-            best_match = None
-            best_score = 0
-
+            # Find all matching teams instead of just the best match
+            matching_variations = []
+            team_matches = []
+            
+            # Extract base team name (without numbers, roman numerals, or parentheses)
+            import re
+            from difflib import SequenceMatcher
+            
+            team_base = re.sub(r'\s+(?:FC|SC)?\s*(?:\([0-9]+\)|I{1,3}|V?I{0,3})?$', '', team, flags=re.IGNORECASE)
+            
+            # First pass: collect all candidates that might be variations of this team
+            base_matches = []
             for candidate in team_candidates:
-                # Calculate Levenshtein distance ratio for fuzzy matching
-                from difflib import SequenceMatcher
+                candidate_base = re.sub(r'\s+(?:FC|SC)?\s*(?:\([0-9]+\)|I{1,3}|V?I{0,3})?$', '', candidate, flags=re.IGNORECASE)
+                
+                # Check if the base names match or contain each other
+                if (team_base.lower() == candidate_base.lower() or 
+                    team_base.lower() in candidate_base.lower() or 
+                    candidate_base.lower() in team_base.lower()):
+                    base_matches.append(candidate)
+            
+            console.log(f"[fuzzy_match_teams] Found {len(base_matches)} potential variations for '{team}'")
+            
+            # Second pass: score each candidate
+            scored_matches = []
+            for candidate in base_matches:
+                # Calculate similarity score
                 score = SequenceMatcher(None, team.lower(), candidate.lower()).ratio()
-
-                # Also check if team is a substring of candidate or vice versa
+                candidate_base = re.sub(r'\s+(?:FC|SC)?\s*(?:\([0-9]+\)|I{1,3}|V?I{0,3})?$', '', candidate, flags=re.IGNORECASE)
+                
+                # Check if base names match exactly (higher priority)
+                if team_base.lower() == candidate_base.lower():
+                    score += 0.3  # Significant boost for matching base names
+                
+                # Check if one is a substring of the other
                 if team.lower() in candidate.lower() or candidate.lower() in team.lower():
                     score += 0.2  # Boost score for substring matches
-
-                if score > best_score:
-                    best_score = score
-                    best_match = candidate
-
-            # Consider it a match if score is above threshold
-            if best_score > 0.6:
-                matched_teams[team] = {
-                    "matched_name": best_match,
-                    "confidence": best_score,
-                    "exact_match": team == best_match
-                }
-            else:
+                
+                # Special case for Key West variations
+                if "key west" in team.lower() and "key west" in candidate.lower():
+                    # Check if both have FC or neither has FC
+                    if ("fc" in team.lower() and "fc" in candidate.lower()) or \
+                       ("fc" not in team.lower() and "fc" not in candidate.lower()):
+                        score += 0.2
+                    
+                    # Special priority for Key West FC (1) which has upcoming games
+                    if candidate.lower() == "key west fc (1)":
+                        score += 0.3  # Give it a significant boost
+                
+                # Add to scored matches if above threshold
+                if score > 0.6:  # Lower threshold to include more relevant variations
+                    scored_matches.append((score, candidate))
+            
+            # Sort matches by score (highest first)
+            scored_matches.sort(reverse=True)
+            
+            # Add all matches above threshold to the result
+            for score, candidate in scored_matches:
+                team_matches.append({
+                    "name": candidate,
+                    "confidence": round(score, 2),
+                    "exact_match": team.lower() == candidate.lower()
+                })
+            
+            # If no matches found, add suggestions
+            if not team_matches:
+                suggestions = sorted(
+                    [(SequenceMatcher(None, team.lower(), c.lower()).ratio(), c)
+                     for c in team_candidates if SequenceMatcher(None, team.lower(), c.lower()).ratio() > 0.4],
+                    key=lambda x: x[0], reverse=True
+                )[:5]
+                
                 matched_teams[team] = {
                     "matched_name": None,
                     "confidence": 0,
-                    "suggestions": sorted(
-                        [(SequenceMatcher(None, team.lower(), c.lower()).ratio(), c)
-                         for c in team_candidates if SequenceMatcher(None, team.lower(), c.lower()).ratio() > 0.4],
-                        key=lambda x: x[0], reverse=True
-                    )[:5]
+                    "suggestions": suggestions
+                }
+            else:
+                # Use the best match as the primary match, but keep all variations
+                matched_teams[team] = {
+                    "matched_name": team_matches[0]["name"],
+                    "confidence": team_matches[0]["confidence"],
+                    "exact_match": team_matches[0]["exact_match"],
+                    "all_variations": [match["name"] for match in team_matches]
                 }
 
         # Resolve time references using Claude's help
@@ -1223,14 +1724,18 @@ def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_fil
             try:
                 resolved_time = json.loads(time_resolution_text)
             except:
-                # Default to January 2025 if parsing fails
+                # Default to current week if parsing fails
+                today = datetime.now()
+                start_of_week = today - timedelta(days=today.weekday())
+                end_of_week = start_of_week + timedelta(days=6)
+                
                 resolved_time = {
                     "resolved_time_ranges": [
                         {
-                            "original_reference": time_references[0] if time_references else "current",
-                            "start_date": "2025-01-01",
-                            "end_date": "2025-01-31",
-                            "description": "January 2025 (default)"
+                            "original_reference": time_references[0] if time_references else "current week",
+                            "start_date": start_of_week.strftime("%Y-%m-%d"),
+                            "end_date": end_of_week.strftime("%Y-%m-%d"),
+                            "description": f"Current week ({start_of_week.strftime('%b %d')} to {end_of_week.strftime('%b %d %Y')})"
                         }
                     ]
                 }
@@ -1245,7 +1750,25 @@ def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_fil
                 "extracted_time_references": time_references
             }
         }
+        
+        # Add a teams array with all variations for easier access in get_scheduled_games
+        teams = []
+        for team_name, team_data in matched_teams.items():
+            if "all_variations" in team_data:
+                # Add all variations if available
+                for variation in team_data["all_variations"]:
+                    teams.append({"name": variation, "confidence": team_data["confidence"]})
+            elif team_data["matched_name"]:
+                # Otherwise just add the matched name
+                teams.append({"name": team_data["matched_name"], "confidence": team_data["confidence"]})
+        
+        # Sort by confidence score
+        teams.sort(key=lambda x: x["confidence"], reverse=True)
+        result["teams"] = teams
 
+        # Cache the result for future use
+        _fuzzy_match_cache[cache_key] = result
+        
         # Format the result as a string
         result_str = ""
 
@@ -1269,7 +1792,7 @@ def fuzzy_match_teams(query: str, team_candidates: List[str] = None, parquet_fil
                 result_str += f"  Period: {time_range.get('start_date', '')} to {time_range.get('end_date', '')}\n"
 
         # Store the result object in a global variable for use by other tools
-        global _last_fuzzy_match_result
+        
         _last_fuzzy_match_result = result
 
         return {"result": result_str}
@@ -1293,6 +1816,59 @@ def tool_create_llm_dataset(tool_input: Dict) -> Dict:
     team = tool_input.get("team", None)
     format = tool_input.get("format", "compact")
     return create_llm_dataset(reasoning, parquet_file, query, team, format)
+
+def get_scheduled_games(team_name: str, start_date: str, end_date: str, parquet_file: str = "analysis/data/data.parquet") -> Dict:
+    console.log(f"Starting simplified scheduled games search")
+    
+    try:
+        # Validate inputs
+        if not team_name or not start_date or not end_date:
+            return {"error": "Missing required parameters (team_name, start_date, end_date)"}
+        
+        console.log(f"Looking for games for {team_name} from {start_date} to {end_date}")
+        
+        # Check if the parquet file exists
+        if not os.path.exists(parquet_file):
+            return {"error": f"Parquet file not found at {parquet_file}"}
+        
+        # Extract the base name (e.g., "Key West" from "Key West FC I")
+        base_name = re.sub(r'\s+(?:FC|SC)?\s*(?:\([0-9]+\)|I{1,3}|V?I{0,3})?$', '', team_name, flags=re.IGNORECASE)
+        console.log(f"Using base name '{base_name}' for flexible matching")
+        
+        # Use the simplified approach
+        team_variations = find_team_variations(base_name, parquet_file)
+        games = find_games_for_period(team_variations, start_date, end_date, parquet_file)
+        
+        # Format the response
+        time_period = f"{start_date} to {end_date}"
+        formatted_response = format_games_response(games, base_name, time_period)
+        
+        # Return the result
+        return {
+            "scheduled_games": games,
+            "formatted_response": formatted_response
+        }
+        
+    except Exception as e:
+        console.log(f"Error in get_scheduled_games: {str(e)}")
+        import traceback
+        console.log(traceback.format_exc())
+        return {"error": f"Error processing request: {str(e)}"}
+def tool_get_scheduled_games(tool_input: Dict) -> Dict:
+    """Adapter for get_scheduled_games function."""
+    team_name = tool_input.get("team_name", "")
+    start_date = tool_input.get("start_date", None)
+    end_date = tool_input.get("end_date", None)
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    
+    result = get_scheduled_games(team_name, start_date, end_date, parquet_file)
+    
+    # If the result is a string (error message), wrap it in a dict
+    if isinstance(result, str):
+        return {"message": result}
+    
+    # Otherwise return the result directly
+    return result
 
 # Create a mapping of tool names to their implementation functions
 def get_tool_mapping() -> Dict:
@@ -1318,6 +1894,7 @@ def get_tool_mapping() -> Dict:
         "select_tool": tool_select_tool,
         "fuzzy_match_teams": tool_fuzzy_match_teams,
         "create_llm_dataset": tool_create_llm_dataset,
+        "get_scheduled_games": tool_get_scheduled_games,
     }
 
 def create_analysis_pipeline(query: str, parquet_file: str) -> Dict:
@@ -1333,6 +1910,7 @@ def create_analysis_pipeline(query: str, parquet_file: str) -> Dict:
     Returns:
         Dictionary with final analysis results and pipeline metadata
     """
+    global _last_fuzzy_match_result
     try:
         console.log(f"[create_analysis_pipeline] Creating analysis pipeline for query: {query}")
 
@@ -1348,7 +1926,7 @@ def create_analysis_pipeline(query: str, parquet_file: str) -> Dict:
         }
 
         # Step 1: Check if we already have fuzzy matching results from a previous tool call
-        global _last_fuzzy_match_result
+        
         if _last_fuzzy_match_result is not None:
             pipeline_context["fuzzy_match_result"] = _last_fuzzy_match_result
             pipeline_context["steps_executed"].append("fuzzy_match_teams")
@@ -2193,6 +2771,18 @@ def select_tool(query: str) -> Dict:
             r"upcoming",
             r"previous"
         ]
+        
+        # Check for scheduled games patterns
+        scheduled_games_patterns = [
+            r"scheduled games",
+            r"upcoming games",
+            r"future games",
+            r"games this week",
+            r"next games",
+            r"upcoming matches",
+            r"schedule",
+            r"fixtures"
+        ]
 
         has_time_reference = any(re.search(pattern, query, re.IGNORECASE) for pattern in time_reference_patterns)
 
@@ -2209,6 +2799,15 @@ def select_tool(query: str) -> Dict:
                     team_match = True
                     break
 
+        # Check if query is about scheduled games
+        is_scheduled_games_query = any(re.search(pattern, query, re.IGNORECASE) for pattern in scheduled_games_patterns)
+        
+        # If query is about scheduled games and contains team references, recommend get_scheduled_games
+        if is_scheduled_games_query and team_match:
+            return {
+                "result": "Tool: get_scheduled_games\nReasoning: This query is asking about scheduled or upcoming games for a specific team. The get_scheduled_games tool will handle date range logic internally and return formatted game information."
+            }
+            
         # If query contains potential team names or ambiguous time references, suggest fuzzy matching first
         if team_match or has_time_reference:
             return {
@@ -2393,3 +2992,87 @@ def create_llm_dataset(reasoning: str, parquet_file: str, query: str = None, tea
         error_message = f"Error creating LLM dataset: {str(e)}\n{traceback.format_exc()}"
         console.print(f"[red]{error_message}[/red]")
         return {"error": error_message}
+
+def tool_analyze_team_performance(tool_input: Dict) -> Dict:
+    """Adapter for analyze_team_performance function."""
+    team_name = tool_input.get("team_name", "")
+    start_date = tool_input.get("start_date", None)
+    end_date = tool_input.get("end_date", None)
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    
+    # Find team variations
+    variations = find_team_variations(team_name, parquet_file)
+    
+    # Analyze performance
+    performance = analyze_team_performance(variations, start_date, end_date, parquet_file)
+    
+    # Format response
+    time_period = f"{start_date} to {end_date}"
+    formatted_response = format_performance_response(performance, team_name, time_period)
+    
+    return {
+        "performance_data": performance,
+        "formatted_response": formatted_response
+    }
+
+def tool_analyze_opponents(tool_input: Dict) -> Dict:
+    """Adapter for analyze_opponents function."""
+    team_name = tool_input.get("team_name", "")
+    start_date = tool_input.get("start_date", None)
+    end_date = tool_input.get("end_date", None)
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    
+    # Find team variations
+    variations = find_team_variations(team_name, parquet_file)
+    
+    # Analyze opponents
+    opponents = analyze_opponents(variations, start_date, end_date, parquet_file)
+    
+    # Format response
+    formatted_response = format_opponent_response(opponents, team_name)
+    
+    return {
+        "opponent_data": opponents,
+        "formatted_response": formatted_response
+    }
+
+def tool_analyze_trends(tool_input: Dict) -> Dict:
+    """Adapter for analyze_trends function."""
+    team_name = tool_input.get("team_name", "")
+    start_date = tool_input.get("start_date", None)
+    end_date = tool_input.get("end_date", None)
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    
+    # Find team variations
+    variations = find_team_variations(team_name, parquet_file)
+    
+    # Analyze trends
+    trends = analyze_trends(variations, start_date, end_date, parquet_file)
+    
+    # Format response
+    formatted_response = format_trend_response(trends, team_name)
+    
+    return {
+        "trend_data": trends,
+        "formatted_response": formatted_response
+    }
+
+def tool_estimate_league_position(tool_input: Dict) -> Dict:
+    """Adapter for estimate_league_position function."""
+    team_name = tool_input.get("team_name", "")
+    league_name = tool_input.get("league_name", "")
+    parquet_file = tool_input.get("parquet_file", "analysis/data/data.parquet")
+    
+    # Find team variations
+    variations = find_team_variations(team_name, parquet_file)
+    
+    # Estimate league position
+    position = estimate_league_position(variations, league_name, parquet_file)
+    
+    # Format response
+    formatted_response = format_league_position_response(position, team_name)
+    
+    return {
+        "position_data": position,
+        "formatted_response": formatted_response
+    }
