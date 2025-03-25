@@ -145,8 +145,15 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
-          # Using hardcoded EC2 host address since there's no secret for it
-          ssh-keyscan ec2-18-218-9-77.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts
+          # Use IP address directly and add error handling
+          echo "Running ssh-keyscan..."
+          # Try IP address first (extracted from hostname)
+          ssh-keyscan -H 18.218.9.77 >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using IP address failed"
+          # Try hostname as fallback
+          ssh-keyscan -H ec2-18-218-9-77.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using hostname failed"
+          # Show known_hosts content
+          echo "Contents of known_hosts:"
+          cat ~/.ssh/known_hosts
 
       - name: Deploy to server
         run: |
@@ -154,7 +161,8 @@ jobs:
           echo "Deploying version $VERSION to production server"
 
           # Connect via SSH and execute deployment commands
-          ssh ec2-user@ec2-18-218-9-77.us-east-2.compute.amazonaws.com << 'EOF'
+          # Use IP address for consistency
+          ssh -o StrictHostKeyChecking=accept-new ec2-user@18.218.9.77 << 'EOF'
             cd /home/ec2-user/ncsoccer-agent
 
             # Pull the latest code for the tag
