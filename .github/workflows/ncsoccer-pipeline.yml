@@ -163,18 +163,60 @@ jobs:
           # Connect via SSH and execute deployment commands
           # Use IP address for consistency
           ssh -o StrictHostKeyChecking=accept-new ec2-user@3.15.145.20 << 'EOF'
+            # Check what directories exist and show environment info
+            echo "Current directory: $(pwd)"
+            echo "Listing home directory:"
+            ls -la /home/ec2-user/
+
+            # Create application directory if it doesn't exist
+            if [ ! -d "/home/ec2-user/ncsoccer-agent" ]; then
+              echo "Creating ncsoccer-agent directory..."
+              mkdir -p /home/ec2-user/ncsoccer-agent
+            fi
+
             cd /home/ec2-user/ncsoccer-agent
 
+            # Check if it's a git repository, if not clone it
+            if [ ! -d ".git" ]; then
+              echo "Initializing Git repository..."
+              git init
+              git remote add origin https://github.com/mzakany23/ncsh-agent.git
+            fi
+
             # Pull the latest code for the tag
+            echo "Fetching latest code and tags..."
             git fetch --all --tags
-            git checkout ${{ steps.get_version.outputs.version }}
+            git checkout ${{ steps.get_version.outputs.version }} || git checkout main
 
-            # Restart services
-            sudo systemctl restart ncsoccer-agent
+            # Create the Docker container if not already running
+            echo "Setting up Docker container..."
+            cd ui
 
-            # Verify deployment
+            # Check if Docker is installed
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found, installing..."
+              sudo amazon-linux-extras install -y docker
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -aG docker $USER
+            fi
+
+            # Check if docker-compose is installed
+            if ! command -v docker-compose &> /dev/null; then
+              echo "docker-compose not found, installing..."
+              sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+
+            # Build and start the container
+            echo "Building and starting the Docker container..."
+            docker-compose down
+            docker-compose build
+            docker-compose up -d
+
+            # Verify the service is running
             echo "Checking service status..."
-            sudo systemctl status ncsoccer-agent
+            docker-compose ps
           EOF
 
       - name: Notify deployment complete
