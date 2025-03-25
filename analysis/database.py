@@ -22,6 +22,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import io
 import base64
 from rich.console import Console
+import re
 
 # Initialize console for rich output
 console = Console()
@@ -388,6 +389,17 @@ def execute_sql(reasoning: str, query: str, parquet_file: str) -> Dict:
     try:
         # Initialize analyzer
         analyzer = DuckDBAnalyzer(parquet_file)
+
+        # Add a LIMIT clause if one doesn't exist to prevent huge result sets
+        # First check if the query already has a LIMIT clause (case insensitive)
+        if not re.search(r'\bLIMIT\s+\d+', query, re.IGNORECASE):
+            # Check for ending semicolon, remove it if present, add LIMIT, then re-add semicolon if needed
+            if query.strip().endswith(';'):
+                query = query.strip()[:-1] + " LIMIT 20;"
+            else:
+                query = query.strip() + " LIMIT 20"
+
+            console.log(f"[execute_sql] Added LIMIT clause to prevent large result sets: {query}")
 
         # Execute query
         result_json = analyzer.query(query)

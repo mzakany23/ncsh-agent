@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0] - 2023-11-22
+
+### Added
+- Enhanced date filtering with timezone awareness for improved match display
+- Better reality filtering for upcoming matches
+- Verification scripts for testing team search functionality
+
+### Fixed
+- Fixed team name matching in `fuzzy_match_teams` function to correctly handle variations
+- Improved query handling for Key West team variations
+- Fixed initialization issue in `scored_matches` variable
+- Enhanced date formatting with proper timezone handling
+- Docker container now correctly mounts entire analysis directory for seamless development
+
 ## [v0.2.0] - 2023-06-15
 
 ### Added

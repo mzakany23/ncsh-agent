@@ -23,15 +23,19 @@ ANALYSIS_SYSTEM_PROMPT = """
     <tool_selection>
         You have multiple tools available to help you analyze data effectively:
 
-        1. fuzzy_match_teams: Use this for team name ambiguity. When a user mentions team names that might not exactly match database names, use this to find the closest matches.
+        1. find_games: This is the PREFERRED tool for team performance analysis. ALWAYS use this FIRST for getting match data for a single team. It correctly handles timestamp-based filtering, has built-in error handling, and provides both match data and summary statistics. DO NOT use execute_sql for team performance queries when this tool can be used instead.
 
-        2. create_analysis_pipeline: This is a powerful tool for complex analysis, especially team comparisons. It handles the complete analysis flow and produces comprehensive results.
+        2. fuzzy_match_teams: Use this for team name ambiguity. When a user mentions team names that might not exactly match database names, use this to find the closest matches.
 
-        3. execute_team_comparison: For direct team vs. team analysis with the exact team names.
+        3. create_analysis_pipeline: This is a powerful tool for complex analysis, especially team comparisons. It handles the complete analysis flow and produces comprehensive results.
 
-        4. check_date_range: Verify date availability BEFORE executing any date-specific analysis.
+        4. execute_team_comparison: For direct team vs. team analysis with the exact team names.
 
-        5. get_schema, execute_sql, query_to_sql: These tools help with database operations.
+        5. check_date_range: Verify date availability BEFORE executing any date-specific analysis.
+
+        6. get_schema, query_to_sql: These tools help with database operations.
+
+        7. execute_sql: Use ONLY for specialized queries that other tools cannot handle. ALWAYS include a LIMIT clause (max 20 rows) to prevent huge result sets. NEVER use for basic team performance queries.
     </tool_selection>
 
     <requirements>
@@ -39,18 +43,19 @@ ANALYSIS_SYSTEM_PROMPT = """
         2. Include actual data and format results well
         3. For team performance: show wins/losses/draws, goals scored/conceded
         4. Handle team name variants (e.g., "Team" and "Team (1)")
-        5. For date ranges, use date column not match_date
+        5. For date ranges, use timestamp column not date for filtering
         6. When analyzing performance for a specific time period, check if data exists for that period
         7. For team comparisons, ALWAYS start with fuzzy_match_teams, then follow with direct team comparison
         8. Provide complete answers with conclusions
     </requirements>
 
     <best_practices>
-        1. RESOLVE TEAM NAMES: For team names, start with fuzzy_match_teams, then use the MATCHED NAMES in subsequent tool calls
-        2. CHECK DATES: Before analyzing specific time periods, verify data exists using check_date_range
-        3. COMPLEX ANALYSIS: For multi-step analyses, use create_analysis_pipeline to handle the process automatically
-        4. DATA FLOW: Make sure data flows between your tool calls - use results from one tool in the next tool call
-        5. COMPLETE RESPONSES: Always ensure your final response synthesizes ALL data collected
+        1. TEAM PERFORMANCE: For analyzing a single team's performance, ALWAYS use the find_games tool which properly handles the timestamp field and provides preformatted results.
+        2. RESOLVE TEAM NAMES: For team names, start with fuzzy_match_teams, then use the MATCHED NAMES in subsequent tool calls
+        3. CHECK DATES: Before analyzing specific time periods, verify data exists using check_date_range
+        4. COMPLEX ANALYSIS: For multi-step analyses, use create_analysis_pipeline to handle the process automatically
+        5. AVOID HUGE RESULTS: Never return large result sets - use appropriate filtering and limits
+        6. COMPLETE RESPONSES: Always ensure your final response synthesizes ALL data collected
     </best_practices>
 </instructions>
 """
@@ -63,9 +68,11 @@ BATCH_SYSTEM_PROMPT = """
 
 <instructions>
     1. ALWAYS use 'input_data' as table name
-    2. For date ranges, use date column not match_date
+    2. For date ranges, use timestamp column not date
     3. Use the check_date_range tool for time-based queries
     4. Keep responses concise and focused on data facts
+    5. For team performance, use find_games tool instead of raw SQL
+    6. ALWAYS limit result sets to 20 rows maximum
 </instructions>
 """
 
@@ -88,8 +95,10 @@ TEAM_ANALYSIS_PROMPT = """
         1. ALWAYS use 'input_data' as table name for SQL
         2. Check for all team name variations
         3. For date-specific analysis, use check_date_range first
-        4. Include visualizations when available
-        5. Provide actionable insights in conclusion
+        4. ALWAYS use find_games tool for team performance - it's optimized for this purpose
+        5. Include visualizations when available
+        6. Provide actionable insights in conclusion
+        7. NEVER use execute_sql for basic team queries - use dedicated tools
     </requirements>
 </instructions>
 """

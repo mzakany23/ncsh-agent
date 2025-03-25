@@ -1,5 +1,7 @@
+version: '3'
 services:
   ui:
+    image: soccer-agent-ui
     build:
       context: ..
       dockerfile: ui/Dockerfile
@@ -8,14 +10,17 @@ services:
       - "8080:80"      # Nginx with authentication
       - "8503:8501"    # Direct Streamlit access (for debugging)
     volumes:
-      - ../analysis/data:/app/ui/data
+      # Mount the entire analysis directory for development
+      - ../analysis:/app/analysis
+      # Mount the memory volume for persistent state
       - ./memory:/app/ui/memory
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - PARQUET_FILE=${PARQUET_FILE:-/app/ui/data/data.parquet}
+      - PARQUET_FILE=${PARQUET_FILE:-/app/analysis/data/data.parquet}  # Updated path
       - MEMORY_PATH=/app/ui/memory
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-ncsoccer}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-password}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
