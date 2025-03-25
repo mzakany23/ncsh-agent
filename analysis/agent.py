@@ -28,7 +28,7 @@ from analysis.prompts import (
 # Initialize console for rich output
 console = Console()
 
-def run_agent(question: str, parquet_file: str, max_tokens: int = 4000) -> str:
+def run_agent(question: str, parquet_file: str, max_tokens: int = 1000) -> str:
     """
     Run the agent to process a natural language question about data in the parquet file.
 
@@ -77,7 +77,7 @@ def update_conversation_history(conversation_history, question=None, response=No
     return conversation_history
 
 
-def run_agent_with_memory(question: str, parquet_file: str, max_tokens: int = 4000,
+def run_agent_with_memory(question: str, parquet_file: str, max_tokens: int = 1000,
                           conversation_history=None) -> Tuple[str, int]:
     """
     A version of run_agent that supports externally passed conversation history.
@@ -163,22 +163,48 @@ def run_agent_with_memory(question: str, parquet_file: str, max_tokens: int = 40
 
     # Process messages recursively until Claude provides a complete response
     while True:
-        # Process a single iteration
-        console.print(f"[yellow]Making API call to Claude (attempt 1/{max_retries})[/yellow]")
-
-        try:
-            # Make the API call without thinking parameter
-            response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
-                max_tokens=max_tokens,
-                messages=messages,
-                system=system_prompt,
-                tools=tools,
-            )
-            console.print("[green]API call successful[/green]")
-        except Exception as e:
-            console.print(f"[red]Error in API call: {str(e)}[/red]")
-            return f"Error in API call: {str(e)}", total_tool_calls
+        # Process with retry logic and exponential backoff
+        for attempt in range(1, max_retries + 1):
+            console.print(f"[yellow]Making API call to Claude (attempt {attempt}/{max_retries})[/yellow]")
+            
+            try:
+                # Make the API call with Claude 3.7 Sonnet (fine-tuned for tool calling)
+                response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=max_tokens,
+                    messages=messages,
+                    system=system_prompt,
+                    tools=tools,
+                )
+                console.print("[green]API call successful[/green]")
+                break  # Success, exit the retry loop
+                
+            except anthropic.APIStatusError as e:
+                # Handle specific status errors like rate limits and overloaded
+                if e.status_code in [429, 529]:  # Rate limit or overloaded
+                    if attempt < max_retries:
+                        # Calculate backoff time with exponential increase and some randomness
+                        backoff_time = base_delay * (2 ** (attempt - 1)) * (0.5 + 0.5 * (time.time() % 1))
+                        console.print(f"[yellow]API overloaded or rate limited. Retrying in {backoff_time:.1f} seconds...[/yellow]")
+                        time.sleep(backoff_time)
+                    else:
+                        console.print(f"[red]Error in API call after {max_retries} attempts: {str(e)}[/red]")
+                        return f"Error in API call: {str(e)}", total_tool_calls
+                else:
+                    # For other status errors, don't retry
+                    console.print(f"[red]Error in API call: {str(e)}[/red]")
+                    return f"Error in API call: {str(e)}", total_tool_calls
+                    
+            except Exception as e:
+                # For general exceptions, don't retry
+                console.print(f"[red]Error in API call: {str(e)}[/red]")
+                return f"Error in API call: {str(e)}", total_tool_calls
+        
+        # If we've exhausted all retries without success or exception
+        if 'response' not in locals():
+            error_msg = "Failed to get a response after multiple attempts"
+            console.print(f"[red]{error_msg}[/red]")
+            return error_msg, total_tool_calls
 
         # Extract text from response for return
         response_text = ""
