@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.1] - 2023-11-23
+
+### Added
+- Tag resynchronization for improved release management
+- Enhanced version control processes
+
+### Fixed
+- Resolved tag synchronization issues between local and remote repositories
+
 ## [v0.3.0] - 2023-11-22
 
 ### Added
