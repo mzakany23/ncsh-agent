@@ -549,7 +549,7 @@ if question := st.chat_input("Ask a question about the match data..."):
                                 "role": msg["role"],
                                 "content": [{"type": "text", "text": msg["content"]}]
                             })
-                    
+
                     raw_output = run_agent_once(
                         enriched_question,
                         st.session_state.parquet_file,
@@ -607,9 +607,9 @@ if question := st.chat_input("Ask a question about the match data..."):
                         if not api_key:
                             logger.error("ANTHROPIC_API_KEY environment variable is not set")
                             raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
-                        
+
                         client = anthropic.Anthropic(api_key=api_key)
-                        
+
                         # Call Claude API to summarize the response
                         logger.info("Calling Claude to summarize the response")
                         claude_summary = client.messages.create(
