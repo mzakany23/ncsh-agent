@@ -147,10 +147,10 @@ jobs:
           mkdir -p ~/.ssh
           # Use IP address directly and add error handling
           echo "Running ssh-keyscan..."
-          # Try IP address first (extracted from hostname)
-          ssh-keyscan -H 18.218.9.77 >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using IP address failed"
-          # Try hostname as fallback
-          ssh-keyscan -H ec2-18-218-9-77.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using hostname failed"
+          # Try IP address
+          ssh-keyscan -H 3.15.145.20 >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using IP address failed"
+          # Try hostname
+          ssh-keyscan -H ec2-3-15-145-20.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan using hostname failed"
           # Show known_hosts content
           echo "Contents of known_hosts:"
           cat ~/.ssh/known_hosts
@@ -162,7 +162,7 @@ jobs:
 
           # Connect via SSH and execute deployment commands
           # Use IP address for consistency
-          ssh -o StrictHostKeyChecking=accept-new ec2-user@18.218.9.77 << 'EOF'
+          ssh -o StrictHostKeyChecking=accept-new ec2-user@3.15.145.20 << 'EOF'
             cd /home/ec2-user/ncsoccer-agent
 
             # Pull the latest code for the tag
