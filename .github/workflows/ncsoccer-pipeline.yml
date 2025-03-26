@@ -134,6 +134,25 @@ jobs:
             echo "You've been added to the docker group. This would normally require re-logging in."
           fi
 
+          # Ensure docker permissions
+          echo "Checking Docker socket permissions..."
+          ls -la /var/run/docker.sock || echo "Docker socket not found or not accessible"
+
+          # Check if user is in docker group
+          if groups | grep -q '\bdocker\b'; then
+            echo "User is in the docker group"
+          else
+            echo "User is not in the docker group, trying to add..."
+            sudo usermod -aG docker $USER || echo "Could not add user to docker group"
+            echo "Will use sudo for docker commands"
+          fi
+
+          # Try to fix docker socket permissions if needed
+          if [ ! -r /var/run/docker.sock ]; then
+            echo "Cannot read docker socket, trying to fix permissions..."
+            sudo chmod 666 /var/run/docker.sock || echo "Could not change docker socket permissions"
+          fi
+
           # Check if docker-compose is installed
           if ! command -v docker-compose &> /dev/null; then
             echo "docker-compose not found, installing..."
@@ -163,15 +182,26 @@ jobs:
           echo "BASIC_AUTH_USERNAME=ncsoccer" >> .env
           echo "BASIC_AUTH_PASSWORD=AUTH_PASSWORD_PLACEHOLDER" >> .env
 
-          # Build and start the container using sudo
+          # Function to run docker commands with sudo if needed
+          run_docker_cmd() {
+            if [ -w /var/run/docker.sock ] || groups | grep -q '\bdocker\b'; then
+              echo "Running without sudo: $@"
+              "$@"
+            else
+              echo "Running with sudo: $@"
+              sudo "$@"
+            fi
+          }
+
+          # Build and start the container
           echo "Building and starting the Docker container..."
 
           # Check if docker-compose exists and is executable
           if [ -x "$(command -v docker-compose)" ]; then
             echo "Using docker-compose..."
-            docker-compose down || true
-            docker-compose build
-            docker-compose up -d
+            run_docker_cmd docker-compose down || true
+            run_docker_cmd docker-compose build
+            run_docker_cmd docker-compose up -d
           else
             echo "Checking if docker-compose exists in known locations..."
             ls -la /usr/local/bin/docker-compose || echo "Not found in /usr/local/bin"
@@ -179,11 +209,11 @@ jobs:
 
             echo "Falling back to regular docker commands..."
             # Stop and remove existing container if it exists
-            docker stop ncsoccer-ui || true
-            docker rm ncsoccer-ui || true
+            run_docker_cmd docker stop ncsoccer-ui || true
+            run_docker_cmd docker rm ncsoccer-ui || true
             # Build and run the container
-            docker build -t ncsoccer-ui -f Dockerfile .
-            docker run -d --name ncsoccer-ui --restart unless-stopped \
+            run_docker_cmd docker build -t ncsoccer-ui -f Dockerfile .
+            run_docker_cmd docker run -d --name ncsoccer-ui --restart unless-stopped \
               -p 8501:8501 \
               -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
               -e BASIC_AUTH_USERNAME=ncsoccer \
@@ -194,9 +224,9 @@ jobs:
           # Verify the service is running
           echo "Checking service status..."
           if [ -x "$(command -v docker-compose)" ]; then
-            docker-compose ps
+            run_docker_cmd docker-compose ps
           else
-            docker ps | grep ncsoccer-ui || echo "No ncsoccer-ui container found"
+            run_docker_cmd docker ps | grep ncsoccer-ui || echo "No ncsoccer-ui container found"
           fi
           SCRIPT
 
