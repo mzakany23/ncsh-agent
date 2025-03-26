@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v0.3.1] - 2023-11-23
+## [v0.3.2] - 2025-03-25
+
+### Added
+- Cleanup pipeline
+
+## [v0.3.1] - 2025-03-25
 
 ### Added
 - Tag resynchronization for improved release management
