@@ -83,7 +83,8 @@ jobs:
           cat > /tmp/deploy.sh << 'SCRIPT'
           #!/bin/bash
           set -e
-
+          # install sudo
+          sudo yum install -y sudo
           # Check what directories exist and show environment info
           echo "Current directory: $(pwd)"
           echo "Listing home directory:"
