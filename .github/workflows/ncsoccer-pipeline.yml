@@ -120,6 +120,10 @@ jobs:
           git reset --hard origin/main
           git checkout VERSION_PLACEHOLDER || echo "Warning: Tag checkout failed, using main branch instead"
 
+          # Record the deployed version to prevent accidental rollbacks
+          echo "VERSION_PLACEHOLDER" > /home/ec2-user/ncsoccer-agent/.deployed-version
+          echo "Version VERSION_PLACEHOLDER deployed at $(date)" >> /home/ec2-user/ncsoccer-agent/.deployment-history
+
           # Create the Docker container if not already running
           echo "Setting up Docker container..."
           cd ui
@@ -151,6 +155,13 @@ jobs:
           if [ ! -r /var/run/docker.sock ]; then
             echo "Cannot read docker socket, trying to fix permissions..."
             sudo chmod 666 /var/run/docker.sock || echo "Could not change docker socket permissions"
+          fi
+
+          # Update Nginx configuration to use the correct port for Streamlit
+          if [ -f /etc/nginx/conf.d/streamlit.conf ]; then
+            echo "Updating Nginx configuration to use correct Streamlit port (8503)..."
+            sudo sed -i 's/proxy_pass http:\/\/localhost:8501;/proxy_pass http:\/\/localhost:8503;/g' /etc/nginx/conf.d/streamlit.conf
+            sudo nginx -t && sudo systemctl restart nginx
           fi
 
           # Check if docker-compose is installed
