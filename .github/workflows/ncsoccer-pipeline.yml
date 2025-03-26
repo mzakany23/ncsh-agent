@@ -134,6 +134,10 @@ jobs:
             echo "docker-compose not found, installing..."
             sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             sudo chmod +x /usr/local/bin/docker-compose
+            # Create a symlink to ensure it's in PATH for sudo
+            sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+            # Verify installation
+            docker-compose --version || echo "Warning: docker-compose installation may have failed"
           fi
 
           # Create .env file with required variables
@@ -144,13 +148,36 @@ jobs:
 
           # Build and start the container using sudo
           echo "Building and starting the Docker container with sudo..."
-          sudo docker-compose down || true
-          sudo docker-compose build
-          sudo docker-compose up -d
+
+          # Try with docker-compose first
+          if command -v docker-compose &> /dev/null; then
+            echo "Using docker-compose..."
+            sudo docker-compose down || true
+            sudo docker-compose build
+            sudo docker-compose up -d
+          else
+            # Fallback to regular docker commands
+            echo "docker-compose not available, falling back to docker commands..."
+            # Stop and remove existing container if it exists
+            sudo docker stop ncsoccer-ui || true
+            sudo docker rm ncsoccer-ui || true
+            # Build and run the container
+            sudo docker build -t ncsoccer-ui -f Dockerfile .
+            sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+              -p 8501:8501 \
+              -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+              -e BASIC_AUTH_USERNAME=ncsoccer \
+              -e BASIC_AUTH_PASSWORD="$BASIC_AUTH_PASSWORD" \
+              ncsoccer-ui
+          fi
 
           # Verify the service is running
           echo "Checking service status..."
-          sudo docker-compose ps
+          if command -v docker-compose &> /dev/null; then
+            sudo docker-compose ps
+          else
+            sudo docker ps | grep ncsoccer-ui
+          fi
           SCRIPT
 
           # Replace placeholders
