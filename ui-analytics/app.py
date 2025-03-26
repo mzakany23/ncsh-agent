@@ -435,17 +435,27 @@ app.layout = dbc.Container([
                             html.Div("Total matches", className="text-muted small")
                         ])
                     ], className="summary-card h-100")
-                ], width=3, className="px-1"),
+                ], width=2, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
                         dbc.CardHeader("Win Rate"),
                         dbc.CardBody([
-                            html.Div(html.H3(id="win-rate", children="0%", className="summary-value")),
+                            html.Div(html.H3(id="win-rate", children="0.0%", className="summary-value")),
                             html.Div("Percentage of wins", className="text-muted small")
                         ])
                     ], className="summary-card h-100")
-                ], width=3, className="px-1"),
+                ], width=2, className="px-1"),
+
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader("Loss Rate"),
+                        dbc.CardBody([
+                            html.Div(html.H3(id="loss-rate-display", children="0.0%", className="summary-value")),
+                            html.Div("Percentage of losses", className="text-muted small")
+                        ])
+                    ], className="summary-card h-100")
+                ], width=2, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
@@ -455,7 +465,17 @@ app.layout = dbc.Container([
                             html.Div("Total goals for", className="text-muted small")
                         ])
                     ], className="summary-card h-100")
-                ], width=3, className="px-1"),
+                ], width=2, className="px-1"),
+
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader("Goals Conceded"),
+                        dbc.CardBody([
+                            html.Div(html.H3(id="goals-conceded-display", children="0", className="summary-value")),
+                            html.Div("Total goals against", className="text-muted small")
+                        ])
+                    ], className="summary-card h-100")
+                ], width=2, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
@@ -465,7 +485,7 @@ app.layout = dbc.Container([
                             html.Div("Goals scored - conceded", className="text-muted small")
                         ])
                     ], className="summary-card h-100")
-                ], width=3, className="px-1")
+                ], width=2, className="px-1")
             ], className="mb-4 mx-0"),
 
             # Performance trend chart
@@ -626,7 +646,9 @@ app.layout = dbc.Container([
     [
         Output('games-played', 'children'),
         Output('win-rate', 'children'),
+        Output('loss-rate-display', 'children'),
         Output('goals-scored', 'children'),
+        Output('goals-conceded-display', 'children'),
         Output('goal-difference', 'children'),
         Output('performance-trend', 'figure'),
         Output('match-results-table', 'data'),
@@ -841,20 +863,21 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
 
     if games_played > 0:
         wins = len(filtered_matches_df[filtered_matches_df['result'] == 'Win'])
-        win_rate_value = (wins / games_played) * 100 if games_played > 0 else 0
-        win_rate = f"{win_rate_value:.1f}%"  # Format as percentage with 1 decimal place
-
         losses = len(filtered_matches_df[filtered_matches_df['result'] == 'Loss'])
-        loss_rate_value = (losses / games_played) * 100 if games_played > 0 else 0
-        loss_rate = f"{loss_rate_value:.1f}%"  # Format as percentage with 1 decimal place
+        win_rate = (wins / games_played) * 100
+        loss_rate = (losses / games_played) * 100
+
+        # Format metrics with proper formatting
+        win_rate_value = f"{win_rate:.1f}%"
+        loss_rate_value = f"{loss_rate:.1f}%"
 
         goals_scored = filtered_matches_df['team_score'].sum()
         goals_conceded = filtered_matches_df['opponent_score'].sum()
         goal_diff = goals_scored - goals_conceded
     else:
         # If no games after filtering, set default values
-        win_rate = "0.0%"
-        loss_rate = "0.0%"
+        win_rate_value = "0.0%"
+        loss_rate_value = "0.0%"
         goals_scored = 0
         goals_conceded = 0
         goal_diff = 0
@@ -1120,9 +1143,9 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
             total_losses = len(group[group['result'] == 'Loss'])
             total_draws = len(group[group['result'] == 'Draw'])
 
-            win_rate = total_wins / total_matches if total_matches > 0 else 0
-            loss_rate = total_losses / total_matches if total_matches > 0 else 0
-            draw_rate = total_draws / total_matches if total_matches > 0 else 0
+            win_rate_opp = total_wins / total_matches if total_matches > 0 else 0
+            loss_rate_opp = total_losses / total_matches if total_matches > 0 else 0
+            draw_rate_opp = total_draws / total_matches if total_matches > 0 else 0
 
             total_goals_for = group['team_score'].sum()
             total_goals_against = group['opponent_score'].sum()
@@ -1134,9 +1157,9 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 'wins': total_wins,
                 'losses': total_losses,
                 'draws': total_draws,
-                'win_rate': win_rate,
-                'loss_rate': loss_rate,
-                'draw_rate': draw_rate,
+                'win_rate': win_rate_opp,
+                'loss_rate': loss_rate_opp,
+                'draw_rate': draw_rate_opp,
                 'goals_for': total_goals_for,
                 'goals_against': total_goals_against,
                 'goal_difference': goal_difference
@@ -1348,9 +1371,11 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
 
     return (
         games_played,
-        win_rate,
-        goals_scored,
-        goal_diff,
+        win_rate_value,
+        loss_rate_value,
+        str(goals_scored),
+        str(goals_conceded),
+        str(goal_diff),
         performance_fig,
         table_data,
         goal_fig,
@@ -1523,12 +1548,13 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
                     # New competitiveness calculation:
                     # - Higher score for teams you've lost to (loss_rate factor)
                     # - Higher score for teams with closer goal difference (inverse relationship)
-                    # - Scale: 100% = lost every game or extremely close matches, 0% = won every game by large margin
                     loss_factor = loss_rate * 100  # 0-100 based on loss percentage
                     margin_factor = max(0, 100 - min(avg_goal_diff * 20, 100))  # 0-100 based on goal margin
 
                     # Combined score: weight loss_factor more heavily (70%) than margin_factor (30%)
                     competitiveness_score = (loss_factor * 0.7) + (margin_factor * 0.3)
+
+                    print(f"Debug: Dropdown - Opponent: {opponent}, Loss Rate: {loss_rate:.2f}, Avg Goal Diff: {avg_goal_diff:.2f}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
 
                     # Threshold now works as: higher threshold = more challenging opponents
                     if competitiveness_score >= competitiveness_threshold:
