@@ -278,6 +278,74 @@ p {
         font-size: 1.8rem;
     }
 }
+
+/* Loading Spinner Styles */
+.dash-spinner.dash-default-spinner {
+    opacity: 0.7;
+    width: 45px !important;
+    height: 45px !important;
+    border-width: 5px !important;
+    border-color: var(--primary) !important;
+    border-bottom-color: transparent !important;
+    border-radius: 50% !important;
+}
+
+.dash-spinner.dash-circle-spinner {
+    opacity: 0.7;
+    width: 45px !important;
+    height: 45px !important;
+    border-width: 5px !important;
+    border-color: var(--primary) !important;
+    border-bottom-color: transparent !important;
+    border-radius: 50% !important;
+}
+
+.dash-spinner-container {
+    background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Fullscreen loading overlay */
+._dash-loading {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.85);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+._dash-loading-callback::after {
+    content: 'Loading dashboard...';
+    font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 1.5rem;
+    color: var(--primary);
+    margin-top: 1rem;
+    margin-left: -1rem;
+}
+
+._dash-loading::before {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 6px solid var(--primary);
+    border-color: var(--primary) transparent var(--primary) transparent;
+    animation: dash-spinner 1.2s linear infinite;
+}
+
+@keyframes dash-spinner {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
 '''
 
 # Initialize the Dash app with Bootstrap
@@ -286,7 +354,11 @@ app = dash.Dash(
     external_stylesheets=[
         dbc.themes.BOOTSTRAP,
         dbc.icons.FONT_AWESOME
-    ]
+    ],
+    # Use this to optimize load time and add custom loading
+    update_title='Loading...',
+    suppress_callback_exceptions=True,
+    title='NC Soccer Analytics Dashboard'
 )
 server = app.server  # Needed for gunicorn deployment
 
@@ -297,8 +369,31 @@ if not os.path.exists(os.path.join(os.path.dirname(__file__), 'assets')):
 with open(os.path.join(os.path.dirname(__file__), 'assets', 'custom.css'), 'w') as f:
     f.write(custom_css)
 
+# Create a spinner container with text for better loading UX
+loading_spinner = dbc.Spinner(
+    id="loading-spinner",
+    fullscreen=True,
+    color="#6F42C1",
+    type="grow",
+    children=[
+        html.Div([
+            html.H3("Loading NC Soccer Analytics Dashboard...",
+                   style={"color": "#6F42C1", "text-align": "center", "margin-top": "20px"}),
+            html.P("Please wait while we prepare your data.",
+                  style={"color": "#5B6AFE", "text-align": "center"})
+        ])
+    ]
+)
+
 # Define the app layout with a standard two-column design
 app.layout = dbc.Container([
+    # Loading spinner container that will be shown/hidden via callbacks
+    html.Div(
+        id="loading-spinner-container",
+        children=[loading_spinner],
+        style={"display": "block"}  # Initially visible
+    ),
+
     # Top Header Row
     dbc.Row([
         dbc.Col([
@@ -426,123 +521,151 @@ app.layout = dbc.Container([
 
             # Summary statistics cards in a single row at the top of the story
             html.H4("Performance Summary", className="section-header"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Games Played"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="games-played", children="0", className="summary-value")),
-                            html.Div("Total matches", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1"),
+            dcc.Loading(
+                id="loading-performance-metrics",
+                type="circle",
+                color="#6F42C1",
+                children=[
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Games Played"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="games-played", children="0", className="summary-value")),
+                                    html.Div("Total matches", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1"),
 
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Win Rate"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="win-rate", children="0.0%", className="summary-value")),
-                            html.Div("Percentage of wins", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1"),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Win Rate"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="win-rate", children="0.0%", className="summary-value")),
+                                    html.Div("Percentage of wins", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1"),
 
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Loss Rate"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="loss-rate-display", children="0.0%", className="summary-value")),
-                            html.Div("Percentage of losses", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1"),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Loss Rate"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="loss-rate-display", children="0.0%", className="summary-value")),
+                                    html.Div("Percentage of losses", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1"),
 
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Goals Scored"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="goals-scored", children="0", className="summary-value")),
-                            html.Div("Total goals for", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1"),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Goals Scored"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="goals-scored", children="0", className="summary-value")),
+                                    html.Div("Total goals for", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1"),
 
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Goals Conceded"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="goals-conceded-display", children="0", className="summary-value")),
-                            html.Div("Total goals against", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1"),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Goals Conceded"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="goals-conceded-display", children="0", className="summary-value")),
+                                    html.Div("Total goals against", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1"),
 
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Goal Difference"),
-                        dbc.CardBody([
-                            html.Div(html.H3(id="goal-difference", children="0", className="summary-value")),
-                            html.Div("Goals scored - conceded", className="text-muted small")
-                        ])
-                    ], className="summary-card h-100")
-                ], width=2, className="px-1")
-            ], className="mb-4 mx-0"),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader("Goal Difference"),
+                                dbc.CardBody([
+                                    html.Div(html.H3(id="goal-difference", children="0", className="summary-value")),
+                                    html.Div("Goals scored - conceded", className="text-muted small")
+                                ])
+                            ], className="summary-card h-100")
+                        ], width=2, className="px-1")
+                    ], className="mb-4 mx-0")
+                ]
+            ),
 
             # Performance trend chart
             html.H4("Performance Over Time", className="section-header"),
-            dbc.Card([
-                dbc.CardBody([
-                    html.P("This chart shows the cumulative wins, draws, and losses over the selected time period."),
-                    dcc.Graph(id="performance-trend")
-                ])
-            ], className="mb-4"),
+            dcc.Loading(
+                id="loading-performance-chart",
+                type="default",
+                color="#6F42C1",
+                children=[
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.P("This chart shows the cumulative wins, draws, and losses over the selected time period."),
+                            dcc.Graph(id="performance-trend")
+                        ])
+                    ], className="mb-4")
+                ]
+            ),
 
             # Goal statistics - with bar chart and pie chart side by side
             html.H4("Goal Analysis", className="section-header"),
-            dbc.Card([
-                dbc.CardBody([
-                    html.P("Breakdown of goals scored, conceded, and the resulting goal difference."),
-                    dbc.Row([
-                        dbc.Col([
-                            dcc.Graph(id="goal-stats-chart")
-                        ], md=6),
-                        dbc.Col([
-                            dcc.Graph(id="goal-stats-pie")
-                        ], md=6)
-                    ])
-                ])
-            ], className="mb-4"),
+            dcc.Loading(
+                id="loading-goal-charts",
+                type="default",
+                color="#6F42C1",
+                children=[
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.P("Breakdown of goals scored, conceded, and the resulting goal difference."),
+                            dbc.Row([
+                                dbc.Col([
+                                    dcc.Graph(id="goal-stats-chart")
+                                ], md=6),
+                                dbc.Col([
+                                    dcc.Graph(id="goal-stats-pie")
+                                ], md=6)
+                            ])
+                        ])
+                    ], className="mb-4")
+                ]
+            ),
 
             # Opponent Analysis Section (conditionally displayed)
             html.Div(
                 [
                     html.H4("Opponent Analysis", className="section-header"),
-                    dbc.Card([
-                        dbc.CardHeader("Opponent Performance Comparison"),
-                        dbc.CardBody([
-                            html.P(id="opponent-analysis-text", children="Detailed comparison against selected opponents."),
-                            dcc.Graph(id="opponent-comparison-chart")
-                        ])
-                    ], className="mb-4"),
+                    dcc.Loading(
+                        id="loading-opponent-analysis",
+                        type="default",
+                        color="#6F42C1",
+                        children=[
+                            dbc.Card([
+                                dbc.CardHeader("Opponent Performance Comparison"),
+                                dbc.CardBody([
+                                    html.P(id="opponent-analysis-text", children="Detailed comparison against selected opponents."),
+                                    dcc.Graph(id="opponent-comparison-chart")
+                                ])
+                            ], className="mb-4"),
 
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardHeader("Win/Loss Distribution"),
-                                dbc.CardBody([
-                                    dcc.Graph(id="opponent-win-rate-chart")
-                                ])
-                            ])
-                        ], md=6),
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardHeader("Goal Performance"),
-                                dbc.CardBody([
-                                    dcc.Graph(id="opponent-goal-diff-chart")
-                                ])
-                            ])
-                        ], md=6),
-                    ], className="mb-3")
+                            dbc.Row([
+                                dbc.Col([
+                                    dbc.Card([
+                                        dbc.CardHeader("Win/Loss Distribution"),
+                                        dbc.CardBody([
+                                            dcc.Graph(id="opponent-win-rate-chart")
+                                        ])
+                                    ])
+                                ], md=6),
+                                dbc.Col([
+                                    dbc.Card([
+                                        dbc.CardHeader("Goal Performance"),
+                                        dbc.CardBody([
+                                            dcc.Graph(id="opponent-goal-diff-chart")
+                                        ])
+                                    ])
+                                ], md=6),
+                            ], className="mb-3")
+                        ]
+                    )
                 ],
                 id="opponent-analysis-section",
                 className="mb-4",
@@ -551,75 +674,82 @@ app.layout = dbc.Container([
 
             # Detailed match results
             html.H4("Match Details", className="section-header"),
-            dbc.Card([
-                dbc.CardBody([
-                    html.P("Complete record of individual matches during the selected period."),
-                    dash_table.DataTable(
-                        id='match-results-table',
-                        columns=[
-                            {"name": "Date", "id": "date", "type": "datetime"},
-                            {"name": "Home Team", "id": "home_team"},
-                            {"name": "Away Team", "id": "away_team"},
-                            {"name": "Score", "id": "score"},
-                            {"name": "Result", "id": "result"}
-                        ],
-                        page_size=10,
-                        sort_action='native',
-                        sort_mode='single',
-                        sort_by=[{'column_id': 'date', 'direction': 'desc'}],
-                        style_table={'overflowX': 'auto'},
-                        style_cell={
-                            'textAlign': 'left',
-                            'padding': '10px',
-                            'fontFamily': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif',
-                            'color': '#343A40'
-                        },
-                        style_header={
-                            'backgroundColor': '#5B6AFE',
-                            'color': 'white',
-                            'fontWeight': 'bold',
-                            'textAlign': 'left',
-                            'border': 'none'
-                        },
-                        style_data={
-                            'border': 'none',
-                            'borderBottom': '1px solid #DEE2E6'
-                        },
-                        style_data_conditional=[
-                            {
-                                'if': {'filter_query': '{result} contains "Win"'},
-                                'backgroundColor': 'rgba(40, 167, 69, 0.1)',
-                                'borderLeft': '3px solid #28A745'
-                            },
-                            {
-                                'if': {'filter_query': '{result} contains "Draw"'},
-                                'backgroundColor': 'rgba(91, 106, 254, 0.1)',
-                                'borderLeft': '3px solid #5B6AFE'
-                            },
-                            {
-                                'if': {'filter_query': '{result} contains "Loss"'},
-                                'backgroundColor': 'rgba(220, 53, 69, 0.1)',
-                                'borderLeft': '3px solid #DC3545'
-                            },
-                            {
-                                'if': {'column_id': 'result', 'filter_query': '{result} contains "Win"'},
-                                'color': '#28A745',
-                                'fontWeight': 'bold'
-                            },
-                            {
-                                'if': {'column_id': 'result', 'filter_query': '{result} contains "Draw"'},
-                                'color': '#5B6AFE',
-                                'fontWeight': 'bold'
-                            },
-                            {
-                                'if': {'column_id': 'result', 'filter_query': '{result} contains "Loss"'},
-                                'color': '#DC3545',
-                                'fontWeight': 'bold'
-                            }
-                        ]
-                    )
-                ])
-            ], className="mb-4"),
+            dcc.Loading(
+                id="loading-match-results",
+                type="default",
+                color="#6F42C1",
+                children=[
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.P("Complete record of individual matches during the selected period."),
+                            dash_table.DataTable(
+                                id='match-results-table',
+                                columns=[
+                                    {"name": "Date", "id": "date", "type": "datetime"},
+                                    {"name": "Home Team", "id": "home_team"},
+                                    {"name": "Away Team", "id": "away_team"},
+                                    {"name": "Score", "id": "score"},
+                                    {"name": "Result", "id": "result"}
+                                ],
+                                page_size=10,
+                                sort_action='native',
+                                sort_mode='single',
+                                sort_by=[{'column_id': 'date', 'direction': 'desc'}],
+                                style_table={'overflowX': 'auto'},
+                                style_cell={
+                                    'textAlign': 'left',
+                                    'padding': '10px',
+                                    'fontFamily': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif',
+                                    'color': '#343A40'
+                                },
+                                style_header={
+                                    'backgroundColor': '#5B6AFE',
+                                    'color': 'white',
+                                    'fontWeight': 'bold',
+                                    'textAlign': 'left',
+                                    'border': 'none'
+                                },
+                                style_data={
+                                    'border': 'none',
+                                    'borderBottom': '1px solid #DEE2E6'
+                                },
+                                style_data_conditional=[
+                                    {
+                                        'if': {'filter_query': '{result} contains "Win"'},
+                                        'backgroundColor': 'rgba(40, 167, 69, 0.1)',
+                                        'borderLeft': '3px solid #28A745'
+                                    },
+                                    {
+                                        'if': {'filter_query': '{result} contains "Draw"'},
+                                        'backgroundColor': 'rgba(91, 106, 254, 0.1)',
+                                        'borderLeft': '3px solid #5B6AFE'
+                                    },
+                                    {
+                                        'if': {'filter_query': '{result} contains "Loss"'},
+                                        'backgroundColor': 'rgba(220, 53, 69, 0.1)',
+                                        'borderLeft': '3px solid #DC3545'
+                                    },
+                                    {
+                                        'if': {'column_id': 'result', 'filter_query': '{result} contains "Win"'},
+                                        'color': '#28A745',
+                                        'fontWeight': 'bold'
+                                    },
+                                    {
+                                        'if': {'column_id': 'result', 'filter_query': '{result} contains "Draw"'},
+                                        'color': '#5B6AFE',
+                                        'fontWeight': 'bold'
+                                    },
+                                    {
+                                        'if': {'column_id': 'result', 'filter_query': '{result} contains "Loss"'},
+                                        'color': '#DC3545',
+                                        'fontWeight': 'bold'
+                                    }
+                                ]
+                            )
+                        ])
+                    ], className="mb-4")
+                ]
+            ),
 
             # Footer
             dbc.Row([
@@ -1619,6 +1749,15 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 
     # Default: return empty when 'all' is selected (not needed to select specific opponents)
     return [], []  # Empty options and selection for 'all'
+
+# Add callback to hide loading spinner after initial load
+@app.callback(
+    Output("loading-spinner-container", "style"),
+    [Input('initial-load', 'children')]
+)
+def hide_loading_after_initial_load(initial_load):
+    # Hide loading spinner container after initial load
+    return {"display": "none"}
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8050)
