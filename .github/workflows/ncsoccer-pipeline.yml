@@ -196,10 +196,19 @@ jobs:
           # Build and start the container
           echo "Building and starting the Docker container..."
 
+          # Explicitly check for and remove any existing container with the same name
+          echo "Checking for existing containers with name 'ncsoccer-ui'..."
+          if run_docker_cmd docker ps -a --format '{{.Names}}' | grep -q "ncsoccer-ui"; then
+            echo "Found existing container named 'ncsoccer-ui'. Stopping and removing it..."
+            run_docker_cmd docker stop ncsoccer-ui || true
+            run_docker_cmd docker rm ncsoccer-ui || true
+          fi
+
           # Check if docker-compose exists and is executable
           if [ -x "$(command -v docker-compose)" ]; then
             echo "Using docker-compose..."
-            run_docker_cmd docker-compose down || true
+            # Make sure any containers from previous docker-compose runs are stopped and removed
+            run_docker_cmd docker-compose down --remove-orphans || true
             run_docker_cmd docker-compose build
             run_docker_cmd docker-compose up -d
           else
