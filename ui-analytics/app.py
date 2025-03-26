@@ -303,8 +303,7 @@ app.layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Div([
-                html.H1("NC Soccer Analytics Dashboard", className="text-center my-4"),
-                html.Hr()
+                html.H1("Game Dashboard", className="text-center my-3")
             ], className="p-3", style={'background-color': 'white', 'border-radius': '8px', 'box-shadow': '0 2px 4px rgba(0,0,0,0.05)'})
         ], width=12)
     ], className="mb-4"),
@@ -373,7 +372,7 @@ app.layout = dbc.Container([
                 ])
             ], className="mb-4"),
 
-            # Summary statistics cards in a row at the top of the story
+            # Summary statistics cards in a single row at the top of the story
             html.H4("Performance Summary", className="section-header"),
             dbc.Row([
                 dbc.Col([
@@ -383,8 +382,8 @@ app.layout = dbc.Container([
                             html.Div(html.H3(id="games-played", children="0", className="summary-value")),
                             html.Div("Total matches", className="text-muted small")
                         ])
-                    ], className="summary-card")
-                ], lg=3, md=6, sm=12),
+                    ], className="summary-card h-100")
+                ], width=3, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
@@ -393,18 +392,18 @@ app.layout = dbc.Container([
                             html.Div(html.H3(id="win-rate", children="0%", className="summary-value")),
                             html.Div("Percentage of wins", className="text-muted small")
                         ])
-                    ], className="summary-card")
-                ], lg=3, md=6, sm=12),
+                    ], className="summary-card h-100")
+                ], width=3, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
-                        dbc.CardHeader("Goals Scored"),
+                        dbc.CardHeader("Loss Rate"),
                         dbc.CardBody([
-                            html.Div(html.H3(id="goals-scored", children="0", className="summary-value")),
-                            html.Div("Total goals scored", className="text-muted small")
+                            html.Div(html.H3(id="loss-rate", children="0%", className="summary-value")),
+                            html.Div("Percentage of losses", className="text-muted small")
                         ])
-                    ], className="summary-card")
-                ], lg=3, md=6, sm=12),
+                    ], className="summary-card h-100")
+                ], width=3, className="px-1"),
 
                 dbc.Col([
                     dbc.Card([
@@ -413,9 +412,9 @@ app.layout = dbc.Container([
                             html.Div(html.H3(id="goal-difference", children="0", className="summary-value")),
                             html.Div("Goals scored - conceded", className="text-muted small")
                         ])
-                    ], className="summary-card")
-                ], lg=3, md=6, sm=12)
-            ], className="mb-4"),
+                    ], className="summary-card h-100")
+                ], width=3, className="px-1")
+            ], className="mb-4 mx-0"),
 
             # Performance trend chart
             html.H4("Performance Over Time", className="section-header"),
@@ -426,12 +425,19 @@ app.layout = dbc.Container([
                 ])
             ], className="mb-4"),
 
-            # Goal statistics - with bar chart
+            # Goal statistics - with bar chart and pie chart side by side
             html.H4("Goal Analysis", className="section-header"),
             dbc.Card([
                 dbc.CardBody([
                     html.P("Breakdown of goals scored, conceded, and the resulting goal difference."),
-                    dcc.Graph(id="goal-stats-chart")
+                    dbc.Row([
+                        dbc.Col([
+                            dcc.Graph(id="goal-stats-chart")
+                        ], md=6),
+                        dbc.Col([
+                            dcc.Graph(id="goal-stats-pie")
+                        ], md=6)
+                    ])
                 ])
             ], className="mb-4"),
 
@@ -443,13 +449,16 @@ app.layout = dbc.Container([
                     dash_table.DataTable(
                         id='match-results-table',
                         columns=[
-                            {"name": "Date", "id": "date"},
+                            {"name": "Date", "id": "date", "type": "datetime"},
                             {"name": "Home Team", "id": "home_team"},
                             {"name": "Away Team", "id": "away_team"},
                             {"name": "Score", "id": "score"},
                             {"name": "Result", "id": "result"}
                         ],
                         page_size=10,
+                        sort_action='native',
+                        sort_mode='single',
+                        sort_by=[{'column_id': 'date', 'direction': 'desc'}],
                         style_table={'overflowX': 'auto'},
                         style_cell={
                             'textAlign': 'left',
@@ -529,11 +538,12 @@ app.layout = dbc.Container([
     [
         Output('games-played', 'children'),
         Output('win-rate', 'children'),
-        Output('goals-scored', 'children'),
+        Output('loss-rate', 'children'),
         Output('goal-difference', 'children'),
         Output('performance-trend', 'figure'),
         Output('match-results-table', 'data'),
-        Output('goal-stats-chart', 'figure')
+        Output('goal-stats-chart', 'figure'),
+        Output('goal-stats-pie', 'figure')
     ],
     [
         Input('team-dropdown', 'value'),
@@ -579,7 +589,7 @@ def update_dashboard(team, start_date, end_date, initial_load):
                END AS result
         FROM soccer_data
         WHERE ({filter_conditions}) AND {team_filter}
-        ORDER BY date
+        ORDER BY date DESC
         """
     else:
         # Query to get team match data (both home and away) for a single team
@@ -603,7 +613,7 @@ def update_dashboard(team, start_date, end_date, initial_load):
                END AS result
         FROM soccer_data
         WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
-        ORDER BY date
+        ORDER BY date DESC
         """
 
     matches_df = conn.execute(matches_query).fetchdf()
@@ -612,6 +622,9 @@ def update_dashboard(team, start_date, end_date, initial_load):
     games_played = len(matches_df)
     wins = len(matches_df[matches_df['result'] == 'Win'])
     win_rate = f"{round(wins / games_played * 100, 1)}%" if games_played > 0 else "0%"
+
+    losses = len(matches_df[matches_df['result'] == 'Loss'])
+    loss_rate = f"{round(losses / games_played * 100, 1)}%" if games_played > 0 else "0%"
 
     goals_scored = matches_df['team_score'].sum()
     goals_conceded = matches_df['opponent_score'].sum()
@@ -628,18 +641,21 @@ def update_dashboard(team, start_date, end_date, initial_load):
             'result': row['result']
         })
 
+    # Sort data by date (newest first)
+    sorted_df = matches_df.sort_values(by='date', ascending=True)  # Sort in chronological order for charts
+
     # Create performance trend chart
-    matches_df['cumulative_wins'] = (matches_df['result'] == 'Win').cumsum()
-    matches_df['cumulative_draws'] = (matches_df['result'] == 'Draw').cumsum()
-    matches_df['cumulative_losses'] = (matches_df['result'] == 'Loss').cumsum()
-    matches_df['match_number'] = range(1, len(matches_df) + 1)
+    sorted_df['cumulative_wins'] = (sorted_df['result'] == 'Win').cumsum()
+    sorted_df['cumulative_draws'] = (sorted_df['result'] == 'Draw').cumsum()
+    sorted_df['cumulative_losses'] = (sorted_df['result'] == 'Loss').cumsum()
+    sorted_df['match_number'] = range(1, len(sorted_df) + 1)
 
     performance_fig = go.Figure()
-    if not matches_df.empty:
+    if not sorted_df.empty:
         # Add traces with improved styling
         performance_fig.add_trace(go.Scatter(
-            x=matches_df['date'],
-            y=matches_df['cumulative_wins'],
+            x=sorted_df['date'],
+            y=sorted_df['cumulative_wins'],
             mode='lines+markers',
             name='Wins',
             line=dict(color='#28a745', width=3),
@@ -647,8 +663,8 @@ def update_dashboard(team, start_date, end_date, initial_load):
             hovertemplate='Date: %{x}<br>Wins: %{y}<extra></extra>'
         ))
         performance_fig.add_trace(go.Scatter(
-            x=matches_df['date'],
-            y=matches_df['cumulative_draws'],
+            x=sorted_df['date'],
+            y=sorted_df['cumulative_draws'],
             mode='lines+markers',
             name='Draws',
             line=dict(color='#5B6AFE', width=3),
@@ -656,8 +672,8 @@ def update_dashboard(team, start_date, end_date, initial_load):
             hovertemplate='Date: %{x}<br>Draws: %{y}<extra></extra>'
         ))
         performance_fig.add_trace(go.Scatter(
-            x=matches_df['date'],
-            y=matches_df['cumulative_losses'],
+            x=sorted_df['date'],
+            y=sorted_df['cumulative_losses'],
             mode='lines+markers',
             name='Losses',
             line=dict(color='#dc3545', width=3),
@@ -739,7 +755,7 @@ def update_dashboard(team, start_date, end_date, initial_load):
 
     goal_fig.update_layout(
         title={
-            'text': f'{display_team} Goal Statistics',
+            'text': f'Goal Statistics',
             'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
         },
         xaxis_title={
@@ -772,14 +788,53 @@ def update_dashboard(team, start_date, end_date, initial_load):
         bargap=0.3
     )
 
+    # Create goal statistics pie chart
+    # Count the results for the pie chart
+    results_count = matches_df['result'].value_counts()
+
+    # Create a better visualization with results distribution
+    pie_fig = go.Figure(data=[go.Pie(
+        labels=['Wins', 'Draws', 'Losses'],
+        values=[
+            results_count.get('Win', 0),
+            results_count.get('Draw', 0),
+            results_count.get('Loss', 0)
+        ],
+        hole=0.4,
+        marker=dict(colors=['#28A745', '#5B6AFE', '#DC3545']),
+        textinfo='label+percent',
+        textfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=14),
+        hoverinfo='label+value',
+        pull=[0.05, 0, 0]
+    )])
+
+    pie_fig.update_layout(
+        title={
+            'text': f'Match Result Distribution',
+            'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+        },
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=-0.2,
+            xanchor='center',
+            x=0.5,
+            font=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=12)
+        ),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=10, r=10, t=80, b=40)
+    )
+
     return (
         games_played,
         win_rate,
-        goals_scored,
+        loss_rate,
         goal_diff,
         performance_fig,
         table_data,
-        goal_fig
+        goal_fig,
+        pie_fig
     )
 
 # Callback to ensure data loads on initial page load
