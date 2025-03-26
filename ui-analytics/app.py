@@ -819,8 +819,22 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
             # Calculate competitiveness for each opponent
             opponent_groups = filtered_matches_df.groupby('opponent_team')
             worthy_opponents = []
+            opponents_with_wins = set()  # Track opponents who have defeated us
 
+            # First pass - identify opponents who have defeated us
             for opponent, group in opponent_groups:
+                opponent_wins = len(group[group['result'] == 'Loss'])
+                if opponent_wins > 0:
+                    opponents_with_wins.add(opponent)
+                    worthy_opponents.append(opponent)
+                    print(f"Debug: Dashboard - Auto-including opponent {opponent} who defeated us {opponent_wins} times")
+
+            # Second pass - evaluate other opponents based on competitiveness
+            for opponent, group in opponent_groups:
+                # Skip opponents who already defeated us (already included)
+                if opponent in opponents_with_wins:
+                    continue
+
                 if len(group) >= 2:  # Minimum match threshold
                     # Calculate results against this opponent
                     wins = len(group[group['result'] == 'Win'])
@@ -840,7 +854,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                     # Combined score: weight loss_factor more heavily (70%) than margin_factor (30%)
                     competitiveness_score = (loss_factor * 0.7) + (margin_factor * 0.3)
 
-                    print(f"Debug: Opponent: {opponent}, Loss Rate: {loss_rate:.2f}, Margin: {avg_goal_diff:.2f}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
+                    print(f"Debug: Dashboard - Evaluating opponent: {opponent}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
 
                     # Threshold now works as: higher threshold = more challenging opponents
                     if competitiveness_score >= competitiveness_threshold:
@@ -848,11 +862,11 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
 
             if worthy_opponents:
                 filtered_matches_df = filtered_matches_df[filtered_matches_df['opponent_team'].isin(worthy_opponents)]
-                print(f"Debug: Found worthy opponents: {worthy_opponents}")
+                print(f"Debug: Dashboard - Found {len(worthy_opponents)} worthy opponents: {worthy_opponents}")
             else:
                 # If no worthy opponents found, keep the filtered dataframe empty
                 filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
-                print(f"Debug: No worthy opponents found with threshold {competitiveness_threshold}")
+                print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
 
     # Only hide opponent analysis if truly no data after filtering
     if len(filtered_matches_df) == 0:
@@ -1529,13 +1543,40 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
         # Calculate competitiveness for each opponent
         worthy_opponents = []
         worthy_opponent_values = []  # To store just the values for selection
+        opponents_with_wins = set()  # Track opponents who have defeated us
 
         # Group by opponent
         if not opponent_df.empty:
             opponent_groups = opponent_df.groupby('opponent')
 
+            # First identify opponents who have defeated us (these are automatic worthy adversaries)
             for opponent, group in opponent_groups:
-                if len(group) >= 2:  # Minimum match threshold (lowered to 2 for better results)
+                # Count games where the opponent won (we lost)
+                opponent_wins = len(group[group['result'] == 'Loss'])
+                if opponent_wins > 0:
+                    opponents_with_wins.add(opponent)
+
+                    # Add this opponent to worthy opponents list
+                    total_matches = len(group)
+                    losses = opponent_wins
+                    loss_rate = losses / total_matches
+
+                    # Add to worthy opponents with note that they've defeated us
+                    worthy_opponents.append({
+                        'label': f"{opponent} ({total_matches} matches, defeated us {opponent_wins} times)",
+                        'value': opponent,
+                        'competitiveness': 100  # Max competitiveness for teams that defeated us
+                    })
+                    worthy_opponent_values.append(opponent)
+                    print(f"Debug: Auto-including opponent {opponent} who defeated us {opponent_wins} times")
+
+            # Then evaluate other opponents based on competitiveness
+            for opponent, group in opponent_groups:
+                # Skip opponents who already defeated us (already added)
+                if opponent in opponents_with_wins:
+                    continue
+
+                if len(group) >= 2:  # Minimum match threshold for competitiveness calculation
                     # Calculate results against this opponent
                     wins = len(group[group['result'] == 'Win'])
                     losses = len(group[group['result'] == 'Loss'])
@@ -1545,23 +1586,16 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
                     group['goal_diff'] = abs(group['team_score'] - group['opponent_score'])
                     avg_goal_diff = group['goal_diff'].mean()
 
-                    # New competitiveness calculation:
-                    # - Higher score for teams you've lost to (loss_rate factor)
-                    # - Higher score for teams with closer goal difference (inverse relationship)
+                    # Competitiveness calculation:
                     loss_factor = loss_rate * 100  # 0-100 based on loss percentage
                     margin_factor = max(0, 100 - min(avg_goal_diff * 20, 100))  # 0-100 based on goal margin
-
-                    # Combined score: weight loss_factor more heavily (70%) than margin_factor (30%)
                     competitiveness_score = (loss_factor * 0.7) + (margin_factor * 0.3)
 
-                    print(f"Debug: Dropdown - Opponent: {opponent}, Loss Rate: {loss_rate:.2f}, Avg Goal Diff: {avg_goal_diff:.2f}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
+                    print(f"Debug: Evaluating opponent: {opponent}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
 
                     # Threshold now works as: higher threshold = more challenging opponents
                     if competitiveness_score >= competitiveness_threshold:
                         total_matches = len(group)
-                        goals_scored = group['team_score'].sum()
-                        goals_conceded = group['opponent_score'].sum()
-
                         worthy_opponents.append({
                             'label': f"{opponent} ({total_matches} matches, {competitiveness_score:.0f}% competitive)",
                             'value': opponent,
@@ -1574,6 +1608,7 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 
         if worthy_opponents:
             # Return all worthy opponents' options and values
+            print(f"Debug: Found {len(worthy_opponents)} worthy opponents")
             return worthy_opponents, worthy_opponent_values
         else:
             return [{'label': 'No worthy opponents found with current threshold', 'value': ''}], []
