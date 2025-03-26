@@ -84,7 +84,12 @@ jobs:
           #!/bin/bash
           set -e
           # install sudo
-          sudo yum install -y sudo
+          yum install -y sudo || echo "Cannot install sudo, may already be installed"
+
+          # Set PATH to include common binary locations
+          export PATH=$PATH:/usr/local/bin:/usr/bin
+          echo "PATH is set to: $PATH"
+
           # Check what directories exist and show environment info
           echo "Current directory: $(pwd)"
           echo "Listing home directory:"
@@ -132,12 +137,24 @@ jobs:
           # Check if docker-compose is installed
           if ! command -v docker-compose &> /dev/null; then
             echo "docker-compose not found, installing..."
-            sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-            # Create a symlink to ensure it's in PATH for sudo
+            curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o docker-compose
+            chmod +x docker-compose
+            echo "Moving docker-compose to /usr/local/bin/"
+            sudo mv docker-compose /usr/local/bin/
+
+            # Create symlinks to all likely locations
+            echo "Creating symlinks for docker-compose..."
             sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+            # Add to current PATH immediately
+            export PATH=$PATH:/usr/local/bin
+
             # Verify installation
-            docker-compose --version || echo "Warning: docker-compose installation may have failed"
+            echo "Testing docker-compose..."
+            ls -la /usr/local/bin/docker-compose || echo "File not found in /usr/local/bin"
+            ls -la /usr/bin/docker-compose || echo "File not found in /usr/bin"
+            which docker-compose || echo "docker-compose not in PATH"
+            docker-compose --version || echo "Failed to run docker-compose --version"
           fi
 
           # Create .env file with required variables
@@ -147,23 +164,26 @@ jobs:
           echo "BASIC_AUTH_PASSWORD=AUTH_PASSWORD_PLACEHOLDER" >> .env
 
           # Build and start the container using sudo
-          echo "Building and starting the Docker container with sudo..."
+          echo "Building and starting the Docker container..."
 
-          # Try with docker-compose first
-          if command -v docker-compose &> /dev/null; then
+          # Check if docker-compose exists and is executable
+          if [ -x "$(command -v docker-compose)" ]; then
             echo "Using docker-compose..."
-            sudo docker-compose down || true
-            sudo docker-compose build
-            sudo docker-compose up -d
+            docker-compose down || true
+            docker-compose build
+            docker-compose up -d
           else
-            # Fallback to regular docker commands
-            echo "docker-compose not available, falling back to docker commands..."
+            echo "Checking if docker-compose exists in known locations..."
+            ls -la /usr/local/bin/docker-compose || echo "Not found in /usr/local/bin"
+            ls -la /usr/bin/docker-compose || echo "Not found in /usr/bin"
+
+            echo "Falling back to regular docker commands..."
             # Stop and remove existing container if it exists
-            sudo docker stop ncsoccer-ui || true
-            sudo docker rm ncsoccer-ui || true
+            docker stop ncsoccer-ui || true
+            docker rm ncsoccer-ui || true
             # Build and run the container
-            sudo docker build -t ncsoccer-ui -f Dockerfile .
-            sudo docker run -d --name ncsoccer-ui --restart unless-stopped \
+            docker build -t ncsoccer-ui -f Dockerfile .
+            docker run -d --name ncsoccer-ui --restart unless-stopped \
               -p 8501:8501 \
               -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
               -e BASIC_AUTH_USERNAME=ncsoccer \
@@ -173,10 +193,10 @@ jobs:
 
           # Verify the service is running
           echo "Checking service status..."
-          if command -v docker-compose &> /dev/null; then
-            sudo docker-compose ps
+          if [ -x "$(command -v docker-compose)" ]; then
+            docker-compose ps
           else
-            sudo docker ps | grep ncsoccer-ui
+            docker ps | grep ncsoccer-ui || echo "No ncsoccer-ui container found"
           fi
           SCRIPT
 
