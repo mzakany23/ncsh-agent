@@ -826,9 +826,9 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
 
     # Find all possible Key West team variations
     debug_team_names_query = """
-    SELECT DISTINCT home_team FROM soccer_data WHERE home_team LIKE '%K%W%' OR home_team LIKE '%Key%'
+    SELECT DISTINCT home_team FROM soccer_data WHERE LOWER(home_team) LIKE '%k%w%' OR LOWER(home_team) LIKE '%key%'
     UNION
-    SELECT DISTINCT away_team FROM soccer_data WHERE away_team LIKE '%K%W%' OR away_team LIKE '%Key%'
+    SELECT DISTINCT away_team FROM soccer_data WHERE LOWER(away_team) LIKE '%k%w%' OR LOWER(away_team) LIKE '%key%'
     """
     debug_team_names_df = conn.execute(debug_team_names_query).fetchdf()
     print(f"Debug: Possible Key West team name variations:")
@@ -842,22 +842,22 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
     # Handle Key West (Combined) option - use LIKE for all Key West teams
     if team == 'Key West (Combined)':
         team_filter = """(
-            home_team LIKE '%Key West%' OR
-            home_team LIKE '%Keywest%' OR
-            home_team LIKE '%Key-West%' OR
-            home_team LIKE '%KeyWest%' OR
-            home_team LIKE '%KW%' OR
-            home_team = 'KWFC' OR
-            home_team LIKE '%Key west%' OR
-            home_team LIKE '%Keystone%' OR
-            away_team LIKE '%Key West%' OR
-            away_team LIKE '%Keywest%' OR
-            away_team LIKE '%Key-West%' OR
-            away_team LIKE '%KeyWest%' OR
-            away_team LIKE '%KW%' OR
-            away_team = 'KWFC' OR
-            away_team LIKE '%Key west%' OR
-            away_team LIKE '%Keystone%'
+            LOWER(home_team) LIKE '%key west%' OR
+            LOWER(home_team) LIKE '%keywest%' OR
+            LOWER(home_team) LIKE '%key-west%' OR
+            LOWER(home_team) LIKE '%keywest%' OR
+            LOWER(home_team) LIKE '%kw%' OR
+            LOWER(home_team) = 'kwfc' OR
+            LOWER(home_team) LIKE '%key west%' OR
+            LOWER(home_team) LIKE '%keystone%' OR
+            LOWER(away_team) LIKE '%key west%' OR
+            LOWER(away_team) LIKE '%keywest%' OR
+            LOWER(away_team) LIKE '%key-west%' OR
+            LOWER(away_team) LIKE '%keywest%' OR
+            LOWER(away_team) LIKE '%kw%' OR
+            LOWER(away_team) = 'kwfc' OR
+            LOWER(away_team) LIKE '%key west%' OR
+            LOWER(away_team) LIKE '%keystone%'
         )"""
 
         # Debug query to check what Key West games are in the dataset
@@ -876,23 +876,23 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
         matches_query = f"""
         SELECT date, home_team, away_team, home_score, away_score,
                CASE
-                   WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN home_score
-                   WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN away_score
+                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
+                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
                    ELSE 0
                END AS team_score,
                CASE
-                   WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN away_score
-                   WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN home_score
+                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
+                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
                    ELSE 0
                END AS opponent_score,
                CASE
-                   WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN away_team
-                   WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN home_team
+                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
+                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
                    ELSE ''
                END AS opponent_team,
                CASE
-                   WHEN (home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%') AND home_score > away_score THEN 'Win'
-                   WHEN (away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%') AND away_score > home_score THEN 'Win'
+                   WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
+                   WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
                    WHEN home_score = away_score THEN 'Draw'
                    ELSE 'Loss'
                END AS result
@@ -939,19 +939,39 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
     filtered_matches_df = matches_df.copy()
 
     if opponent_filter_type == 'specific' and opponent_selection and len(opponent_selection) > 0:
-        # Filter for specific opponents
-        filtered_matches_df = filtered_matches_df[filtered_matches_df['opponent_team'].isin(opponent_selection)]
+        # Normalize opponent names for case-insensitive matching
+        # Create normalized versions of opponent names for matching
+        if not filtered_matches_df.empty:
+            filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
+            # Create normalized versions of the selected opponents
+            normalized_selection = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in opponent_selection]
+
+            # Filter using normalized names
+            mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_selection))
+            filtered_matches_df = filtered_matches_df[mask]
+
+            print(f"Debug: Selected specific opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
     elif opponent_filter_type == 'worthy':
         # Use opponent_selection which is automatically populated with all worthy opponents
         if opponent_selection and len(opponent_selection) > 0:
-            filtered_matches_df = filtered_matches_df[filtered_matches_df['opponent_team'].isin(opponent_selection)]
+            # Normalize opponent names for case-insensitive matching
+            if not filtered_matches_df.empty:
+                filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
+                # Create normalized versions of the selected opponents
+                normalized_selection = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in opponent_selection]
+
+                # Filter using normalized names
+                mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_selection))
+                filtered_matches_df = filtered_matches_df[mask]
+
+                print(f"Debug: Selected worthy opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
         else:
             # Calculate competitiveness for each opponent
             opponent_groups = filtered_matches_df.groupby('opponent_team')
             worthy_opponents = []
-            opponents_with_wins = set()  # Track opponents who have defeated us
+            opponents_with_wins = set()  # Track opponents with wins against us
 
-            # First pass - identify opponents who have defeated us
+            # First pass - find opponents with wins against our team
             for opponent, group in opponent_groups:
                 opponent_wins = len(group[group['result'] == 'Loss'])
                 if opponent_wins > 0:
@@ -965,7 +985,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 if opponent in opponents_with_wins:
                     continue
 
-                if len(group) >= 2:  # Minimum match threshold
+                if len(group) >= 1:  # Reduced minimum match threshold to 1
                     # Calculate results against this opponent
                     wins = len(group[group['result'] == 'Win'])
                     losses = len(group[group['result'] == 'Loss'])
@@ -991,12 +1011,22 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                         worthy_opponents.append(opponent)
 
             if worthy_opponents:
-                filtered_matches_df = filtered_matches_df[filtered_matches_df['opponent_team'].isin(worthy_opponents)]
+                # Filter using normalized names for case-insensitive matching
+                filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
+                normalized_worthy = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in worthy_opponents]
+
+                mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_worthy))
+                filtered_matches_df = filtered_matches_df[mask]
+
                 print(f"Debug: Dashboard - Found {len(worthy_opponents)} worthy opponents: {worthy_opponents}")
             else:
                 # If no worthy opponents found, keep the filtered dataframe empty
                 filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
                 print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
+
+    # Remove the normalized_opponent column if it exists before further processing
+    if 'normalized_opponent' in filtered_matches_df.columns:
+        filtered_matches_df = filtered_matches_df.drop(columns=['normalized_opponent'])
 
     # Only hide opponent analysis if truly no data after filtering
     if len(filtered_matches_df) == 0:
@@ -1618,26 +1648,26 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
         filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
 
         if team == 'Key West (Combined)':
-            team_filter = "(home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' OR away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%')"
+            team_filter = "(LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%')"
             opponent_query = f"""
             SELECT
                 CASE
-                    WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN away_team
-                    WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN home_team
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
                 END AS opponent,
                 CASE
-                    WHEN (home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%') AND home_score > away_score THEN 'Win'
-                    WHEN (away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%') AND away_score > home_score THEN 'Win'
+                    WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
+                    WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
                     WHEN home_score = away_score THEN 'Draw'
                     ELSE 'Loss'
                 END AS result,
                 CASE
-                    WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN home_score
-                    WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN away_score
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
                 END AS team_score,
                 CASE
-                    WHEN home_team LIKE '%Key West%' OR home_team LIKE '%Keywest%' OR home_team LIKE '%Key-West%' OR home_team LIKE '%KeyWest%' OR home_team LIKE '%KW%' OR home_team = 'KWFC' OR home_team LIKE '%Key west%' OR home_team LIKE '%Keystone%' THEN away_score
-                    WHEN away_team LIKE '%Key West%' OR away_team LIKE '%Keywest%' OR away_team LIKE '%Key-West%' OR away_team LIKE '%KeyWest%' OR away_team LIKE '%KW%' OR away_team = 'KWFC' OR away_team LIKE '%Key west%' OR away_team LIKE '%Keystone%' THEN home_score
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
                 END AS opponent_score
             FROM soccer_data
             WHERE ({filter_conditions}) AND {team_filter}
@@ -1675,16 +1705,31 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
         worthy_opponent_values = []  # To store just the values for selection
         opponents_with_wins = set()  # Track opponents who have defeated us
 
-        # Group by opponent
+        # Group by opponent, but normalize names first to handle case variations
+        # Add a normalized column for grouping
         if not opponent_df.empty:
-            opponent_groups = opponent_df.groupby('opponent')
+            # Create a normalized team name column for grouping
+            opponent_df['normalized_opponent'] = opponent_df['opponent'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
+
+            # Group by normalized opponent name
+            opponent_groups = opponent_df.groupby('normalized_opponent')
+
+            # Create a mapping of normalized names to original display names
+            name_mapping = {}
+            for _, row in opponent_df.iterrows():
+                norm_name = row['normalized_opponent']
+                if norm_name not in name_mapping:
+                    name_mapping[norm_name] = row['opponent']
 
             # First identify opponents who have defeated us (these are automatic worthy adversaries)
-            for opponent, group in opponent_groups:
+            for norm_opponent, group in opponent_groups:
+                # Use the original name for display
+                display_name = name_mapping[norm_opponent]
+
                 # Count games where the opponent won (we lost)
                 opponent_wins = len(group[group['result'] == 'Loss'])
                 if opponent_wins > 0:
-                    opponents_with_wins.add(opponent)
+                    opponents_with_wins.add(norm_opponent)
 
                     # Add this opponent to worthy opponents list
                     total_matches = len(group)
@@ -1693,20 +1738,23 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 
                     # Add to worthy opponents with note that they've defeated us
                     worthy_opponents.append({
-                        'label': f"{opponent} ({total_matches} matches, defeated us {opponent_wins} times)",
-                        'value': opponent,
+                        'label': f"{display_name} ({total_matches} matches, defeated us {opponent_wins} times)",
+                        'value': display_name,
                         'competitiveness': 100  # Max competitiveness for teams that defeated us
                     })
-                    worthy_opponent_values.append(opponent)
-                    print(f"Debug: Auto-including opponent {opponent} who defeated us {opponent_wins} times")
+                    worthy_opponent_values.append(display_name)
+                    print(f"Debug: Auto-including opponent {display_name} who defeated us {opponent_wins} times")
 
             # Then evaluate other opponents based on competitiveness
-            for opponent, group in opponent_groups:
+            for norm_opponent, group in opponent_groups:
                 # Skip opponents who already defeated us (already added)
-                if opponent in opponents_with_wins:
+                if norm_opponent in opponents_with_wins:
                     continue
 
-                if len(group) >= 2:  # Minimum match threshold for competitiveness calculation
+                if len(group) >= 1:  # Reduced minimum match threshold to 1
+                    # Use the original name for display
+                    display_name = name_mapping[norm_opponent]
+
                     # Calculate results against this opponent
                     wins = len(group[group['result'] == 'Win'])
                     losses = len(group[group['result'] == 'Loss'])
@@ -1721,17 +1769,17 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
                     margin_factor = max(0, 100 - min(avg_goal_diff * 20, 100))  # 0-100 based on goal margin
                     competitiveness_score = (loss_factor * 0.7) + (margin_factor * 0.3)
 
-                    print(f"Debug: Evaluating opponent: {opponent}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
+                    print(f"Debug: Evaluating opponent: {display_name}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
 
                     # Threshold now works as: higher threshold = more challenging opponents
                     if competitiveness_score >= competitiveness_threshold:
                         total_matches = len(group)
                         worthy_opponents.append({
-                            'label': f"{opponent} ({total_matches} matches, {competitiveness_score:.0f}% competitive)",
-                            'value': opponent,
+                            'label': f"{display_name} ({total_matches} matches, {competitiveness_score:.0f}% competitive)",
+                            'value': display_name,
                             'competitiveness': competitiveness_score
                         })
-                        worthy_opponent_values.append(opponent)
+                        worthy_opponent_values.append(display_name)
 
         # Sort by competitiveness (most competitive first)
         worthy_opponents = sorted(worthy_opponents, key=lambda x: x['competitiveness'], reverse=True)
