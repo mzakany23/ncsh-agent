@@ -109,10 +109,10 @@ jobs:
           git fetch --all --tags -f
 
           # Clean and checkout the tag, with fallback to main
-          echo "Checking out version ${VERSION_PLACEHOLDER}..."
+          echo "Checking out version VERSION_PLACEHOLDER..."
           git checkout main
           git reset --hard origin/main
-          git checkout ${VERSION_PLACEHOLDER} || echo "Warning: Tag checkout failed, using main branch instead"
+          git checkout VERSION_PLACEHOLDER || echo "Warning: Tag checkout failed, using main branch instead"
 
           # Create the Docker container if not already running
           echo "Setting up Docker container..."
