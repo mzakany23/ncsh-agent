@@ -2168,17 +2168,19 @@ def populate_edit_teams(group_name):
      Output('new-group-name', 'value'),
      Output('teams-for-group', 'value'),
      Output('edit-group-dropdown', 'options'),
-     Output('team-group-dropdown', 'options')],
+     Output('team-group-dropdown', 'options'),
+     Output('team-group-dropdown', 'value')],
     [Input('create-group-button', 'n_clicks'),
      Input('update-group-button', 'n_clicks'),
      Input('delete-group-button', 'n_clicks')],
     [State('new-group-name', 'value'),
      State('teams-for-group', 'value'),
      State('edit-group-dropdown', 'value'),
-     State('edit-teams-for-group', 'value')]
+     State('edit-teams-for-group', 'value'),
+     State('team-group-dropdown', 'value')]
 )
 def manage_team_groups(create_clicks, update_clicks, delete_clicks,
-                       new_name, new_teams, edit_name, edit_teams):
+                       new_name, new_teams, edit_name, edit_teams, current_selection):
     """Handle team group management operations."""
     ctx = callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
@@ -2187,6 +2189,7 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
     status = ""
     new_name_value = ""
     new_teams_value = []
+    selected_group = current_selection  # Keep current selection by default
 
     global team_groups  # Use the global team_groups dictionary
 
@@ -2195,6 +2198,7 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
         if create_team_group(new_name, new_teams):
             status = f"Team group '{new_name}' created successfully!"
             team_groups = get_team_groups()  # Refresh team groups
+            selected_group = new_name  # Auto-select newly created group
         else:
             status = f"Failed to create team group '{new_name}'. It may already exist."
             new_name_value = new_name
@@ -2205,6 +2209,9 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
         if update_team_group(edit_name, edit_teams):
             status = f"Team group '{edit_name}' updated successfully!"
             team_groups = get_team_groups()  # Refresh team groups
+            # If current selection is the updated group, keep it selected
+            if current_selection == edit_name:
+                selected_group = edit_name
         else:
             status = f"Failed to update team group '{edit_name}'."
 
@@ -2213,13 +2220,20 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
         if delete_team_group(edit_name):
             status = f"Team group '{edit_name}' deleted successfully!"
             team_groups = get_team_groups()  # Refresh team groups
+            # If we deleted the currently selected group, select another group if available
+            if current_selection == edit_name:
+                selected_group = next(iter(team_groups.keys())) if team_groups else None
         else:
             status = f"Failed to delete team group '{edit_name}'."
 
     # Update dropdown options with refreshed team groups
     group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
 
-    return status, new_name_value, new_teams_value, group_options, group_options
+    # Ensure the selected group still exists after operations
+    if selected_group not in team_groups and team_groups:
+        selected_group = next(iter(team_groups.keys()))
+
+    return status, new_name_value, new_teams_value, group_options, group_options, selected_group
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8050)
