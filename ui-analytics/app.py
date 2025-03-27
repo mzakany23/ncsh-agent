@@ -17,12 +17,196 @@ import pandas as pd
 import duckdb
 from datetime import datetime, timedelta, date
 import numpy as np
+import sqlite3
+import json
 
 # Add parent directory to path to find modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Get the path to the parquet file from environment variables
 PARQUET_FILE = os.environ.get('PARQUET_FILE', 'analysis/data/data.parquet')
+
+# SQLite database utilities for team groups - inlined from db_utils.py
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+    print(f"Created data directory at {DATA_DIR}")
+
+DB_PATH = os.path.join(DATA_DIR, 'team_groups.db')
+
+def init_db():
+    """Initialize the SQLite database with necessary tables."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Create team_groups table if it doesn't exist
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS team_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # Create team_group_members table if it doesn't exist
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS team_group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL,
+        team_name TEXT NOT NULL,
+        FOREIGN KEY (group_id) REFERENCES team_groups (id) ON DELETE CASCADE,
+        UNIQUE(group_id, team_name)
+    )
+    ''')
+
+    # Ensure foreign key constraints are enforced
+    cursor.execute('PRAGMA foreign_keys = ON')
+
+    conn.commit()
+    conn.close()
+
+    print(f"SQLite database initialized at {DB_PATH}")
+    return DB_PATH
+
+def get_db_connection():
+    """Get a SQLite database connection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('PRAGMA foreign_keys = ON')  # Enable foreign key constraints
+    return conn
+
+def create_team_group(name, teams):
+    """Create a new team group."""
+    print(f"Attempting to create team group '{name}' with {len(teams)} teams")
+    if not name or not teams:
+        print(f"Invalid team group creation: name='{name}', teams count={len(teams) if teams else 0}")
+        return False
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Insert the team group
+        cursor.execute("INSERT INTO team_groups (name) VALUES (?)", (name,))
+        group_id = cursor.lastrowid
+
+        # Insert the team members
+        for team in teams:
+            cursor.execute(
+                "INSERT INTO team_group_members (group_id, team_name) VALUES (?, ?)",
+                (group_id, team)
+            )
+
+        conn.commit()
+        print(f"Successfully created team group '{name}' with {len(teams)} teams at {DB_PATH}")
+        return True
+    except sqlite3.IntegrityError as e:
+        print(f"Error creating team group: {str(e)}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_team_groups():
+    """Get all team groups with their members."""
+    print(f"Retrieving team groups from {DB_PATH}")
+
+    if not os.path.exists(DB_PATH):
+        print(f"Warning: Database file does not exist at {DB_PATH}")
+        return {}
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    result = {}
+
+    try:
+        # Get all team groups
+        cursor.execute("SELECT id, name FROM team_groups ORDER BY name")
+        groups = cursor.fetchall()
+
+        print(f"Found {len(groups)} team groups in database")
+
+        # For each group, get its members
+        for group_id, group_name in groups:
+            cursor.execute(
+                "SELECT team_name FROM team_group_members WHERE group_id = ? ORDER BY team_name",
+                (group_id,)
+            )
+            teams = [row[0] for row in cursor.fetchall()]
+            result[group_name] = teams
+            print(f"  - Group '{group_name}' has {len(teams)} teams")
+
+        return result
+    finally:
+        conn.close()
+
+def update_team_group(name, teams):
+    """Update an existing team group."""
+    if not name:
+        return False
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get the group ID
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (name,))
+        row = cursor.fetchone()
+
+        if not row:
+            print(f"Team group '{name}' not found")
+            return False
+
+        group_id = row[0]
+
+        # Delete existing members
+        cursor.execute("DELETE FROM team_group_members WHERE group_id = ?", (group_id,))
+
+        # Insert new members
+        for team in teams:
+            cursor.execute(
+                "INSERT INTO team_group_members (group_id, team_name) VALUES (?, ?)",
+                (group_id, team)
+            )
+
+        conn.commit()
+        print(f"Updated team group '{name}' with {len(teams)} teams")
+        return True
+    except sqlite3.Error as e:
+        print(f"Error updating team group: {str(e)}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def delete_team_group(name):
+    """Delete a team group."""
+    if not name:
+        return False
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Delete the team group (members will be cascaded)
+        cursor.execute("DELETE FROM team_groups WHERE name = ?", (name,))
+
+        if cursor.rowcount == 0:
+            print(f"Team group '{name}' not found")
+            return False
+
+        conn.commit()
+        print(f"Deleted team group '{name}'")
+        return True
+    except sqlite3.Error as e:
+        print(f"Error deleting team group: {str(e)}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+# Initialize the SQLite database for team groups
+init_db()
 
 # Initialize the DuckDB connection and load data
 conn = duckdb.connect(database=':memory:')
@@ -40,6 +224,10 @@ teams = teams_df['team'].tolist()
 
 # Add Key West (Combined) option at the beginning of the list
 teams.insert(0, "Key West (Combined)")
+
+# Get team groups from the database
+team_groups = get_team_groups()
+print(f"Loaded {len(team_groups)} team groups")
 
 # Get date range for the date picker
 date_range_query = """
@@ -263,6 +451,55 @@ p {
     color: var(--white) !important;
 }
 
+/* Fix for date picker overlapping issues */
+.DayPicker {
+    z-index: 1500 !important;
+    background-color: white !important;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2) !important;
+}
+
+.DayPicker_focusRegion,
+.DayPicker_focusRegion_1 {
+    background-color: white !important;
+    z-index: 1500 !important;
+}
+
+.CalendarMonth {
+    background-color: white !important;
+}
+
+.DayPicker_transitionContainer {
+    background-color: white !important;
+}
+
+.DayPickerNavigation {
+    z-index: 1501 !important;
+}
+
+.DayPicker_portal {
+    z-index: 1502 !important;
+    background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Additional fixes for date picker */
+.CalendarMonthGrid {
+    background-color: white !important;
+}
+
+.DateRangePicker_picker {
+    background-color: white !important;
+    z-index: 1500 !important;
+}
+
+.SingleDatePicker_picker {
+    background-color: white !important;
+    z-index: 1500 !important;
+}
+
+.CalendarMonth_table {
+    background-color: white !important;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .summary-card {
@@ -419,6 +656,33 @@ app.layout = dbc.Container([
                     className="mb-4"
                 ),
 
+                html.Label("Team Selection Type:", className="fw-bold mb-2"),
+                dcc.RadioItems(
+                    id='team-selection-type',
+                    options=[
+                        {'label': 'Individual Team', 'value': 'individual'},
+                        {'label': 'Team Group', 'value': 'group'}
+                    ],
+                    value='individual',
+                    className="mb-2"
+                ),
+
+                html.Div(
+                    [
+                        html.Label("Select Team Group:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='team-group-dropdown',
+                            options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
+                            value=next(iter(team_groups.keys())) if team_groups else None,
+                            searchable=True,
+                            className="mb-2",
+                            placeholder="Select a team group"
+                        )
+                    ],
+                    id="team-group-selection-div",
+                    style={'display': 'none'}
+                ),
+
                 html.Label("Opponent Filter:", className="fw-bold mb-2"),
                 dcc.RadioItems(
                     id='opponent-filter-type',
@@ -492,6 +756,75 @@ app.layout = dbc.Container([
                 ),
 
                 html.Hr(className="my-4"),
+
+                # Team Groups Management Section
+                html.Div([
+                    html.H5("Team Groups Management", className="mb-3", style={'color': '#5B6AFE'}),
+
+                    html.Label("Create New Team Group:", className="fw-bold mb-2"),
+                    dbc.Input(
+                        id="new-group-name",
+                        type="text",
+                        placeholder="Enter group name",
+                        className="mb-2"
+                    ),
+                    html.Div([
+                        html.Label("Select teams to include:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='teams-for-group',
+                            options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                            value=[],
+                            multi=True,
+                            className="mb-2",
+                            placeholder="Select teams to include in this group",
+                            style={'position': 'relative', 'zIndex': 1010}
+                        ),
+                    ], style={'position': 'relative', 'zIndex': 1000}),
+                    dbc.Button(
+                        "Create Group",
+                        id="create-group-button",
+                        color="primary",
+                        className="mb-3"
+                    ),
+
+                    html.Div([
+                        html.Label("Edit Existing Group:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='edit-group-dropdown',
+                            options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
+                            placeholder="Select group to edit",
+                            className="mb-2",
+                            style={'position': 'relative'},
+                        ),
+                        html.Label("Select teams to edit:", className="fw-bold mb-2"),
+                        html.Div([
+                            dcc.Dropdown(
+                                id='edit-teams-for-group',
+                                options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                                value=[],
+                                multi=True,
+                                className="mb-2",
+                                placeholder="Select teams to include in this group",
+                                style={'position': 'relative', 'zIndex': 1010}
+                            ),
+                        ], style={'position': 'relative', 'zIndex': 1000}),
+                        dbc.ButtonGroup([
+                            dbc.Button(
+                                "Update Group",
+                                id="update-group-button",
+                                color="primary",
+                                className="me-2"
+                            ),
+                            dbc.Button(
+                                "Delete Group",
+                                id="delete-group-button",
+                                color="danger"
+                            ),
+                        ], className="mb-3 d-flex"),
+                    ], id="edit-group-div"),
+
+                    html.Div(id="group-management-status", className="small text-muted my-2")
+                ], className="mb-4"),
 
                 html.Div([
                     html.P([
@@ -1806,6 +2139,87 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 def hide_loading_after_initial_load(initial_load):
     # Hide loading spinner container after initial load
     return {"display": "none"}
+
+# Callback to toggle between individual team and team group selection
+@app.callback(
+    [Output('team-dropdown', 'style'),
+     Output('team-group-selection-div', 'style')],
+    [Input('team-selection-type', 'value')]
+)
+def toggle_team_selection_type(selection_type):
+    if selection_type == 'individual':
+        return {'display': 'block'}, {'display': 'none'}
+    else:  # 'group'
+        return {'display': 'none'}, {'display': 'block'}
+
+# Callback to populate edit teams dropdown when a group is selected
+@app.callback(
+    Output('edit-teams-for-group', 'value'),
+    [Input('edit-group-dropdown', 'value')]
+)
+def populate_edit_teams(group_name):
+    if not group_name or group_name not in team_groups:
+        return []
+    return team_groups[group_name]
+
+# Callback to create a new team group
+@app.callback(
+    [Output('group-management-status', 'children'),
+     Output('new-group-name', 'value'),
+     Output('teams-for-group', 'value'),
+     Output('edit-group-dropdown', 'options'),
+     Output('team-group-dropdown', 'options')],
+    [Input('create-group-button', 'n_clicks'),
+     Input('update-group-button', 'n_clicks'),
+     Input('delete-group-button', 'n_clicks')],
+    [State('new-group-name', 'value'),
+     State('teams-for-group', 'value'),
+     State('edit-group-dropdown', 'value'),
+     State('edit-teams-for-group', 'value')]
+)
+def manage_team_groups(create_clicks, update_clicks, delete_clicks,
+                       new_name, new_teams, edit_name, edit_teams):
+    """Handle team group management operations."""
+    ctx = callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+
+    # Default return values
+    status = ""
+    new_name_value = ""
+    new_teams_value = []
+
+    global team_groups  # Use the global team_groups dictionary
+
+    if triggered_id == 'create-group-button' and new_name and new_teams:
+        # Create a new team group
+        if create_team_group(new_name, new_teams):
+            status = f"Team group '{new_name}' created successfully!"
+            team_groups = get_team_groups()  # Refresh team groups
+        else:
+            status = f"Failed to create team group '{new_name}'. It may already exist."
+            new_name_value = new_name
+            new_teams_value = new_teams
+
+    elif triggered_id == 'update-group-button' and edit_name and edit_teams:
+        # Update an existing team group
+        if update_team_group(edit_name, edit_teams):
+            status = f"Team group '{edit_name}' updated successfully!"
+            team_groups = get_team_groups()  # Refresh team groups
+        else:
+            status = f"Failed to update team group '{edit_name}'."
+
+    elif triggered_id == 'delete-group-button' and edit_name:
+        # Delete a team group
+        if delete_team_group(edit_name):
+            status = f"Team group '{edit_name}' deleted successfully!"
+            team_groups = get_team_groups()  # Refresh team groups
+        else:
+            status = f"Failed to delete team group '{edit_name}'."
+
+    # Update dropdown options with refreshed team groups
+    group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+
+    return status, new_name_value, new_teams_value, group_options, group_options
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8050)
