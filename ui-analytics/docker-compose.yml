@@ -1,0 +1,25 @@
+version: '3'
+services:
+  analytics:
+    image: soccer-analytics-dashboard
+    build:
+      context: ..
+      dockerfile: ui-analytics/Dockerfile
+    container_name: ncsoccer-analytics
+    ports:
+      - "8090:80"     # Nginx with authentication
+      - "8050:8050"   # Direct Dash access (for debugging)
+    volumes:
+      # Mount the entire analysis directory for access to data
+      - ../analysis:/app/analysis
+    environment:
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-ncsoccer}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-password}
+      - PARQUET_FILE=${PARQUET_FILE:-/app/analysis/data/data.parquet}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8050/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
