@@ -35,11 +35,25 @@ if not os.path.exists(DATA_DIR):
 DB_PATH = os.path.join(DATA_DIR, 'team_groups.db')
 
 def init_db():
-    """Initialize the SQLite database with necessary tables."""
-    conn = sqlite3.connect(DB_PATH)
+    """Initialize the SQLite database for team groups."""
+    # Get the directory path
+    dir_path = os.path.join(os.path.dirname(__file__), 'data')
+
+    # Create the directory if it doesn't exist
+    os.makedirs(dir_path, exist_ok=True)
+
+    # Set the database path
+    db_path = os.path.join(dir_path, 'team_groups.db')
+    print(f"Initializing SQLite database at {db_path}")
+
+    # Connect to the database
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create team_groups table if it doesn't exist
+    # Enable foreign key support
+    cursor.execute("PRAGMA foreign_keys = ON")
+
+    # Create the team_groups table if it doesn't exist
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS team_groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,30 +62,36 @@ def init_db():
     )
     ''')
 
-    # Create team_group_members table if it doesn't exist
+    # Create the team_group_members table if it doesn't exist
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS team_group_members (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id INTEGER NOT NULL,
         team_name TEXT NOT NULL,
-        FOREIGN KEY (group_id) REFERENCES team_groups (id) ON DELETE CASCADE,
+        FOREIGN KEY (group_id) REFERENCES team_groups(id) ON DELETE CASCADE,
         UNIQUE(group_id, team_name)
     )
     ''')
 
-    # Ensure foreign key constraints are enforced
-    cursor.execute('PRAGMA foreign_keys = ON')
-
+    # Commit the changes and close the connection
     conn.commit()
     conn.close()
 
-    print(f"SQLite database initialized at {DB_PATH}")
-    return DB_PATH
-
 def get_db_connection():
     """Get a SQLite database connection."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute('PRAGMA foreign_keys = ON')  # Enable foreign key constraints
+    # Get the directory path
+    dir_path = os.path.join(os.path.dirname(__file__), 'data')
+
+    # Create the directory if it doesn't exist
+    os.makedirs(dir_path, exist_ok=True)
+
+    # Set the database path
+    db_path = os.path.join(dir_path, 'team_groups.db')
+
+    # Connect to the database and enable foreign keys
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+
     return conn
 
 def create_team_group(name, teams):
@@ -107,36 +127,30 @@ def create_team_group(name, teams):
         conn.close()
 
 def get_team_groups():
-    """Get all team groups with their members."""
-    print(f"Retrieving team groups from {DB_PATH}")
-
-    if not os.path.exists(DB_PATH):
-        print(f"Warning: Database file does not exist at {DB_PATH}")
-        return {}
+    """Get all team groups from the database."""
+    print(f"Retrieving team groups from {get_db_connection().execute('PRAGMA database_list').fetchone()[2]}")
 
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    result = {}
 
     try:
         # Get all team groups
         cursor.execute("SELECT id, name FROM team_groups ORDER BY name")
         groups = cursor.fetchall()
 
-        print(f"Found {len(groups)} team groups in database")
-
-        # For each group, get its members
+        # Create a dictionary of team groups
+        team_groups = {}
         for group_id, group_name in groups:
-            cursor.execute(
-                "SELECT team_name FROM team_group_members WHERE group_id = ? ORDER BY team_name",
-                (group_id,)
-            )
+            # Get all teams in the group
+            cursor.execute("SELECT team_name FROM team_group_members WHERE group_id = ?", (group_id,))
             teams = [row[0] for row in cursor.fetchall()]
-            result[group_name] = teams
-            print(f"  - Group '{group_name}' has {len(teams)} teams")
+            team_groups[group_name] = teams
 
-        return result
+        print(f"Found {len(team_groups)} team groups in database")
+        return team_groups
+    except sqlite3.Error as e:
+        print(f"Error retrieving team groups: {str(e)}")
+        return {}
     finally:
         conn.close()
 
@@ -182,24 +196,61 @@ def update_team_group(name, teams):
 def delete_team_group(name):
     """Delete a team group."""
     if not name:
+        print(f"Error: Cannot delete team group with empty name")
         return False
+
+    print(f"Attempting to delete team group: '{name}'")
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
-        # Delete the team group (members will be cascaded)
-        cursor.execute("DELETE FROM team_groups WHERE name = ?", (name,))
+        # Start a transaction
+        conn.execute("BEGIN TRANSACTION")
 
-        if cursor.rowcount == 0:
-            print(f"Team group '{name}' not found")
+        # Enable foreign keys for cascading deletes
+        cursor.execute("PRAGMA foreign_keys = ON")
+
+        # First check if the group exists
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (name,))
+        group = cursor.fetchone()
+
+        if not group:
+            print(f"Error: Team group '{name}' not found in database")
             return False
 
+        group_id = group[0]
+        print(f"Found team group with ID: {group_id}")
+
+        # Count members to be deleted
+        cursor.execute("SELECT COUNT(*) FROM team_group_members WHERE group_id = ?", (group_id,))
+        member_count = cursor.fetchone()[0]
+        print(f"Team group has {member_count} members that will be deleted")
+
+        # First delete the members explicitly, ignoring errors
+        try:
+            cursor.execute("DELETE FROM team_group_members WHERE group_id = ?", (group_id,))
+            print(f"Deleted {member_count} team members")
+        except sqlite3.Error as e:
+            print(f"Warning when deleting members: {str(e)}")
+            # Continue with deletion of the group
+
+        # Then delete the team group
+        cursor.execute("DELETE FROM team_groups WHERE id = ?", (group_id,))
+
+        # Verify the deletion
+        cursor.execute("SELECT id FROM team_groups WHERE id = ?", (group_id,))
+        if cursor.fetchone():
+            print(f"Error: Group {group_id} still exists after attempted deletion")
+            conn.rollback()
+            return False
+
+        # Commit and return success
         conn.commit()
-        print(f"Deleted team group '{name}'")
+        print(f"Successfully deleted team group '{name}' with ID {group_id}")
         return True
     except sqlite3.Error as e:
-        print(f"Error deleting team group: {str(e)}")
+        print(f"Database error deleting team group: {str(e)}")
         conn.rollback()
         return False
     finally:
@@ -2185,19 +2236,26 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
     ctx = callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
+    print(f"Team group management triggered by: {triggered_id}")
+    print(f"Current state - Create clicks: {create_clicks}, Update clicks: {update_clicks}, Delete clicks: {delete_clicks}")
+    print(f"Edit name: {edit_name}, Edit teams count: {len(edit_teams) if edit_teams else 0}")
+    print(f"Current group selection: {current_selection}")
+
     # Default return values
     status = ""
     new_name_value = ""
     new_teams_value = []
     selected_group = current_selection  # Keep current selection by default
 
-    global team_groups  # Use the global team_groups dictionary
+    # Declare global to ensure we update the actual shared variable
+    global team_groups
 
     if triggered_id == 'create-group-button' and new_name and new_teams:
         # Create a new team group
         if create_team_group(new_name, new_teams):
             status = f"Team group '{new_name}' created successfully!"
-            team_groups = get_team_groups()  # Refresh team groups
+            # Refresh team groups after successful creation
+            team_groups = get_team_groups()
             selected_group = new_name  # Auto-select newly created group
         else:
             status = f"Failed to create team group '{new_name}'. It may already exist."
@@ -2208,31 +2266,59 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
         # Update an existing team group
         if update_team_group(edit_name, edit_teams):
             status = f"Team group '{edit_name}' updated successfully!"
-            team_groups = get_team_groups()  # Refresh team groups
+            # Refresh team groups after successful update
+            team_groups = get_team_groups()
             # If current selection is the updated group, keep it selected
             if current_selection == edit_name:
                 selected_group = edit_name
         else:
             status = f"Failed to update team group '{edit_name}'."
 
-    elif triggered_id == 'delete-group-button' and edit_name:
-        # Delete a team group
-        if delete_team_group(edit_name):
-            status = f"Team group '{edit_name}' deleted successfully!"
-            team_groups = get_team_groups()  # Refresh team groups
-            # If we deleted the currently selected group, select another group if available
-            if current_selection == edit_name:
-                selected_group = next(iter(team_groups.keys())) if team_groups else None
+    elif triggered_id == 'delete-group-button':
+        # Validate the input for deletion
+        if not edit_name:
+            print("Delete operation failed: No team group selected")
+            status = "Delete failed: No team group selected"
         else:
-            status = f"Failed to delete team group '{edit_name}'."
+            print(f"Attempting to delete team group: {edit_name}")
+            # Delete a team group
+            if delete_team_group(edit_name):
+                status = f"Team group '{edit_name}' deleted successfully!"
+
+                # Force removal from the team_groups dictionary before refreshing
+                if edit_name in team_groups:
+                    del team_groups[edit_name]
+
+                # Refresh team groups after deletion
+                team_groups = get_team_groups()
+                print(f"After deletion, available groups: {list(team_groups.keys())}")
+
+                # Clear the current selection if it was the deleted group
+                if current_selection == edit_name:
+                    # Select another group if available, otherwise set to None
+                    if team_groups:
+                        selected_group = next(iter(team_groups.keys()))
+                        print(f"Selected new group: {selected_group}")
+                    else:
+                        selected_group = None
+                        print("No groups available after deletion")
+            else:
+                status = f"Failed to delete team group '{edit_name}'."
 
     # Update dropdown options with refreshed team groups
+    print(f"Updating dropdowns with team groups: {list(team_groups.keys())}")
     group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
 
-    # Ensure the selected group still exists after operations
-    if selected_group not in team_groups and team_groups:
-        selected_group = next(iter(team_groups.keys()))
+    # Make sure the selected group still exists
+    if selected_group and selected_group not in team_groups:
+        if team_groups:
+            selected_group = next(iter(team_groups.keys()))
+            print(f"Selected group not found, defaulting to: {selected_group}")
+        else:
+            selected_group = None
+            print("No groups available, setting selection to None")
 
+    print(f"Final selected group: {selected_group}")
     return status, new_name_value, new_teams_value, group_options, group_options, selected_group
 
 if __name__ == '__main__':
