@@ -17,12 +17,185 @@ import pandas as pd
 import duckdb
 from datetime import datetime, timedelta, date
 import numpy as np
+import json
+import sqlite3
+import traceback
 
 # Add parent directory to path to find modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Get the path to the parquet file from environment variables
 PARQUET_FILE = os.environ.get('PARQUET_FILE', 'analysis/data/data.parquet')
+
+# Path for the SQLite database
+SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'team_groups.db')
+print(f"SQLite database path set to: {SQLITE_DB_PATH}")
+
+# Initialize SQLite database for team groups
+def init_team_groups_db():
+    try:
+        print(f"Initializing SQLite database at {SQLITE_DB_PATH}")
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Create team_groups table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        )
+        ''')
+
+        # Create team_group_members table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_group_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            team_name TEXT NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES team_groups (id) ON DELETE CASCADE,
+            UNIQUE (group_id, team_name)
+        )
+        ''')
+
+        conn.commit()
+        print(f"SQLite database initialized at {SQLITE_DB_PATH}")
+        return True
+    except Exception as e:
+        print(f"Error initializing SQLite database: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+# Functions to interact with team groups in SQLite
+def get_team_groups():
+    """Retrieve all team groups from the database."""
+    try:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Get all groups
+        cursor.execute("SELECT id, name FROM team_groups ORDER BY name")
+        groups = cursor.fetchall()
+
+        team_groups = {}
+        for group_id, group_name in groups:
+            # Get all teams in this group
+            cursor.execute("SELECT team_name FROM team_group_members WHERE group_id = ?", (group_id,))
+            teams = [row[0] for row in cursor.fetchall()]
+            team_groups[group_name] = teams
+
+        return team_groups
+    except Exception as e:
+        print(f"Error retrieving team groups: {e}")
+        traceback.print_exc()
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+def add_team_group(group_name, team_list):
+    """Add a new team group to the database."""
+    try:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Check if group already exists
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (group_name,))
+        existing = cursor.fetchone()
+        if existing:
+            print(f"Group '{group_name}' already exists")
+            return False
+
+        # Add new group
+        cursor.execute("INSERT INTO team_groups (name) VALUES (?)", (group_name,))
+        group_id = cursor.lastrowid
+
+        # Add team members
+        for team in team_list:
+            cursor.execute("INSERT INTO team_group_members (group_id, team_name) VALUES (?, ?)",
+                          (group_id, team))
+
+        conn.commit()
+        print(f"Added team group '{group_name}' with {len(team_list)} teams")
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Error adding team group: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def update_team_group(group_name, team_list):
+    """Update an existing team group in the database."""
+    try:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Check if group exists
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (group_name,))
+        existing = cursor.fetchone()
+        if not existing:
+            print(f"Group '{group_name}' does not exist")
+            return False
+
+        group_id = existing[0]
+
+        # Delete existing team members
+        cursor.execute("DELETE FROM team_group_members WHERE group_id = ?", (group_id,))
+
+        # Add updated team members
+        for team in team_list:
+            cursor.execute("INSERT INTO team_group_members (group_id, team_name) VALUES (?, ?)",
+                          (group_id, team))
+
+        conn.commit()
+        print(f"Updated team group '{group_name}' with {len(team_list)} teams")
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Error updating team group: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def delete_team_group(group_name):
+    """Delete a team group from the database."""
+    try:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Check if group exists
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (group_name,))
+        existing = cursor.fetchone()
+        if not existing:
+            print(f"Group '{group_name}' does not exist")
+            return False
+
+        group_id = existing[0]
+
+        # Delete group and all its members (cascade deletion will handle members)
+        cursor.execute("DELETE FROM team_groups WHERE id = ?", (group_id,))
+
+        conn.commit()
+        print(f"Deleted team group '{group_name}'")
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Error deleting team group: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+# Path for the old JSON file (for backwards compatibility)
+TEAM_GROUPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'team_groups.json')
 
 # Initialize the DuckDB connection and load data
 conn = duckdb.connect(database=':memory:')
@@ -40,6 +213,20 @@ teams = teams_df['team'].tolist()
 
 # Add Key West (Combined) option at the beginning of the list
 teams.insert(0, "Key West (Combined)")
+
+# Initialize the SQLite database
+print("Initializing SQLite database...")
+init_team_groups_db()
+
+# Load or initialize team groups
+team_groups = {}
+if os.path.exists(TEAM_GROUPS_FILE):
+    with open(TEAM_GROUPS_FILE, 'r') as f:
+        try:
+            team_groups = json.load(f)
+        except json.JSONDecodeError:
+            print(f"Error loading team groups file: {TEAM_GROUPS_FILE}")
+            team_groups = {}
 
 # Get date range for the date picker
 date_range_query = """
@@ -96,7 +283,7 @@ custom_css = '''
     --white: #FFFFFF;           /* White for cards and contrast */
 
     /* Semantic Colors */
-    --success: #28A745;         /* Green for positive metrics */
+    --success: #5B6AFE;         /* Blue for positive metrics (was green) */
     --warning: #5B6AFE;         /* Blue for neutral metrics */
     --danger: #DC3545;          /* Red for negative metrics */
 
@@ -107,6 +294,34 @@ custom_css = '''
     --shadow-color: rgba(0, 0, 0, 0.05);
 }
 
+/* Critical fixes for dropdown menus */
+.Select-menu-outer {
+    z-index: 10000 !important;
+    display: block !important;
+    visibility: visible !important;
+}
+
+.Select, .dash-dropdown {
+    position: relative !important;
+    z-index: 100 !important;
+}
+
+.Select-menu, .Select-control {
+    z-index: 100 !important;
+}
+
+/* Force menu visibility */
+.is-open .Select-menu-outer {
+    display: block !important;
+    visibility: visible !important;
+}
+
+/* Layout fixes */
+.filter-panel {
+    overflow: visible !important;
+}
+
+/* Base styling */
 body {
     font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background-color: var(--body-bg);
@@ -196,7 +411,7 @@ p {
 
 /* Results styling */
 .result-win {
-    background-color: rgba(40, 167, 69, 0.1) !important;
+    background-color: rgba(91, 106, 254, 0.1) !important;
     border-left: 3px solid var(--success) !important;
 }
 
@@ -237,6 +452,24 @@ p {
     border-radius: 0 0 6px 6px !important;
     border: 1px solid var(--border-color) !important;
     box-shadow: 0 2px 4px var(--shadow-color) !important;
+    z-index: 1000 !important;
+}
+
+/* Fix dropdown positioning */
+.dash-dropdown {
+    z-index: 1000 !important;
+}
+
+.VirtualizedSelectOption {
+    z-index: 1000 !important;
+}
+
+.VirtualizedSelectFocusedOption {
+    z-index: 1000 !important;
+}
+
+.Select-menu {
+    z-index: 1000 !important;
 }
 
 /* Date picker styling */
@@ -346,6 +579,207 @@ p {
         transform: rotate(360deg);
     }
 }
+
+/* Additional dropdown fixes */
+.dash-dropdown .Select-menu-outer {
+    position: absolute !important;
+    top: 100% !important;
+    width: 100% !important;
+    z-index: 1050 !important;
+}
+
+/* Ensure dropdowns don't get cut off on smaller screens */
+@media (max-width: 768px) {
+    .dash-dropdown .Select-menu-outer {
+        position: fixed !important;
+        width: 90vw !important;
+        left: 5vw !important;
+        max-height: 50vh !important;
+    }
+}
+
+/* Ensure React-Select dropdown appears above other elements */
+div[class*="-menu"] {
+    z-index: 1050 !important;
+}
+
+/* Fix for dash-bootstrap-components dropdowns */
+.dropdown-menu {
+    z-index: 1050 !important;
+}
+
+/* Critical dropdown fix */
+.dash-dropdown, .Select {
+    position: relative !important;
+    z-index: 9999 !important;
+}
+
+.VirtualizedSelectFocusedOption,
+.VirtualizedSelectOption,
+.Select-menu-outer,
+.Select-menu,
+.Select-control,
+.Select-input {
+    z-index: 9999 !important;
+}
+
+.Select-menu-outer {
+    position: absolute !important;
+    display: block !important;
+    top: 100% !important;
+    left: 0 !important;
+    width: 100% !important;
+}
+
+/* Fix filter panel to ensure it doesn't hide dropdowns */
+.filter-panel {
+    overflow: visible !important;
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* Container fixes */
+.dash-dropdown .Select-menu-outer {
+    display: block !important;
+    position: absolute !important;
+    z-index: 9999 !important;
+}
+
+/* Date picker styling */
+.DateInput_input {
+    border-radius: 4px !important;
+    font-size: 0.9rem !important;
+    color: var(--neutral-dark) !important;
+}
+
+.DateRangePickerInput {
+    border-radius: 6px !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+.CalendarDay__selected,
+.CalendarDay__selected:hover {
+    background: var(--primary) !important;
+    border: 1px double var(--primary) !important;
+}
+
+.CalendarDay__selected_span {
+    background: var(--primary-light) !important;
+    border: 1px double var(--primary-light) !important;
+    color: var(--white) !important;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .summary-card {
+        margin-bottom: 15px;
+    }
+
+    .section-header {
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
+
+    .summary-value {
+        font-size: 1.8rem;
+    }
+}
+
+/* Loading Spinner Styles */
+.dash-spinner.dash-default-spinner {
+    opacity: 0.7;
+    width: 45px !important;
+    height: 45px !important;
+    border-width: 5px !important;
+    border-color: var(--primary) !important;
+    border-bottom-color: transparent !important;
+    border-radius: 50% !important;
+}
+
+.dash-spinner.dash-circle-spinner {
+    opacity: 0.7;
+    width: 45px !important;
+    height: 45px !important;
+    border-width: 5px !important;
+    border-color: var(--primary) !important;
+    border-bottom-color: transparent !important;
+    border-radius: 50% !important;
+}
+
+.dash-spinner-container {
+    background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Fullscreen loading overlay */
+._dash-loading {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.85);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+._dash-loading-callback::after {
+    content: 'Loading dashboard...';
+    font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 1.5rem;
+    color: var(--primary);
+    margin-top: 1rem;
+    margin-left: -1rem;
+}
+
+._dash-loading::before {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 6px solid var(--primary);
+    border-color: var(--primary) transparent var(--primary) transparent;
+    animation: dash-spinner 1.2s linear infinite;
+}
+
+@keyframes dash-spinner {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Additional dropdown fixes */
+.dash-dropdown .Select-menu-outer {
+    position: absolute !important;
+    top: 100% !important;
+    width: 100% !important;
+    z-index: 1050 !important;
+}
+
+/* Ensure dropdowns don't get cut off on smaller screens */
+@media (max-width: 768px) {
+    .dash-dropdown .Select-menu-outer {
+        position: fixed !important;
+        width: 90vw !important;
+        left: 5vw !important;
+        max-height: 50vh !important;
+    }
+}
+
+/* Ensure React-Select dropdown appears above other elements */
+div[class*="-menu"] {
+    z-index: 1050 !important;
+}
+
+/* Fix for dash-bootstrap-components dropdowns */
+.dropdown-menu {
+    z-index: 1050 !important;
+}
 '''
 
 # Initialize the Dash app with Bootstrap
@@ -399,7 +833,7 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Div([
                 html.H1("Game Dashboard", className="text-center my-3")
-            ], className="p-3", style={'background-color': 'white', 'border-radius': '8px', 'box-shadow': '0 2px 4px rgba(0,0,0,0.05)'})
+            ], className="p-3", style={'background-color': 'white', 'border-radius': '8px', 'box-shadow': '0 2px 4px rgba(0,0,0,0.05)', 'z-index': 1})
         ], width=12)
     ], className="mb-4"),
 
@@ -416,7 +850,39 @@ app.layout = dbc.Container([
                     options=[{'label': team, 'value': team} for team in teams],
                     value='Key West (Combined)',  # Default to Key West (Combined)
                     searchable=True,
-                    className="mb-4"
+                    className="mb-4",
+                    style={'position': 'relative'},
+                    persistence=True
+                ),
+
+                # Team selection type (individual team or team group)
+                html.Label("Team Selection Type:", className="fw-bold mb-2"),
+                dcc.RadioItems(
+                    id='team-selection-type',
+                    options=[
+                        {'label': 'Individual Team', 'value': 'individual'},
+                        {'label': 'Team Group', 'value': 'group'}
+                    ],
+                    value='individual',
+                    className="mb-2"
+                ),
+
+                # Team group dropdown (conditionally displayed)
+                html.Div(
+                    [
+                        html.Label("Select Team Group:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='team-group-dropdown',
+                            options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
+                            value=next(iter(team_groups.keys())) if team_groups else None,
+                            searchable=True,
+                            className="mb-2",
+                            style={'position': 'relative'},
+                            persistence=True
+                        )
+                    ],
+                    id="team-group-selection-div",
+                    style={'display': 'none'}
                 ),
 
                 html.Label("Opponent Filter:", className="fw-bold mb-2"),
@@ -441,7 +907,10 @@ app.layout = dbc.Container([
                             multi=True,
                             searchable=True,
                             className="mb-2",
-                            placeholder="Select one or more opponents"
+                            placeholder="Search and select one or more opponents",
+                            optionHeight=50,
+                            style={'maxHeight': '200px', 'overflowY': 'auto', 'position': 'relative'},
+                            persistence=True
                         ),
                         html.Div(
                             [
@@ -453,7 +922,7 @@ app.layout = dbc.Container([
                                     step=5,
                                     value=30,
                                     marks={
-                                        0: {'label': '0%', 'style': {'color': '#28A745'}},
+                                        0: {'label': '0%', 'style': {'color': '#5B6AFE'}},
                                         30: {'label': '30%', 'style': {'color': '#5B6AFE'}},
                                         70: {'label': '70%', 'style': {'color': '#DC3545'}},
                                         100: {'label': '100%', 'style': {'color': '#DC3545'}}
@@ -492,6 +961,80 @@ app.layout = dbc.Container([
                 ),
 
                 html.Hr(className="my-4"),
+
+                # Team Groups Management Section with higher z-index
+                html.Div([
+                    html.H5("Team Groups Management", className="mb-3", style={'color': '#5B6AFE'}),
+
+                    # Create new group inputs
+                    html.Label("Create New Team Group:", className="fw-bold mb-2"),
+                    dbc.Input(
+                        id="new-group-name",
+                        type="text",
+                        placeholder="Enter group name",
+                        className="mb-2"
+                    ),
+                    # Teams dropdown with fixed styling
+                    html.Div([
+                        html.Label("Select teams to include:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='teams-for-group',
+                            options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                            value=[],
+                            multi=True,
+                            className="mb-2",
+                            placeholder="Select teams to include in this group",
+                            style={'position': 'relative', 'zIndex': 1010}
+                        ),
+                    ], style={'position': 'relative', 'zIndex': 1000}),
+                    dbc.Button(
+                        "Create Group",
+                        id="create-group-button",
+                        color="primary",
+                        className="mb-3"
+                    ),
+
+                    # Edit existing group inputs (conditionally displayed)
+                    html.Div([
+                        html.Label("Edit Existing Group:", className="fw-bold mb-2"),
+                        dcc.Dropdown(
+                            id='edit-group-dropdown',
+                            options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
+                            placeholder="Select group to edit",
+                            className="mb-2",
+                            style={'position': 'relative'},
+                            persistence=True
+                        ),
+                        html.Label("Select teams to edit:", className="fw-bold mb-2"),
+                        html.Div([
+                            dcc.Dropdown(
+                                id='edit-teams-for-group',
+                                options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                                value=[],
+                                multi=True,
+                                className="mb-2",
+                                placeholder="Select teams to include in this group",
+                                style={'position': 'relative', 'zIndex': 1010}
+                            ),
+                        ], style={'position': 'relative', 'zIndex': 1000}),
+                        dbc.ButtonGroup([
+                            dbc.Button(
+                                "Update Group",
+                                id="update-group-button",
+                                color="primary",
+                                className="me-2"
+                            ),
+                            dbc.Button(
+                                "Delete Group",
+                                id="delete-group-button",
+                                color="danger"
+                            ),
+                        ], className="mb-3 d-flex"),
+                    ], id="edit-group-div"),
+
+                    # Status message for feedback
+                    html.Div(id="group-management-status", className="small text-muted my-2")
+                ], className="mb-4"),
 
                 html.Div([
                     html.P([
@@ -716,8 +1259,8 @@ app.layout = dbc.Container([
                                 style_data_conditional=[
                                     {
                                         'if': {'filter_query': '{result} contains "Win"'},
-                                        'backgroundColor': 'rgba(40, 167, 69, 0.1)',
-                                        'borderLeft': '3px solid #28A745'
+                                        'backgroundColor': 'rgba(91, 106, 254, 0.1)',
+                                        'borderLeft': '3px solid #5B6AFE'
                                     },
                                     {
                                         'if': {'filter_query': '{result} contains "Draw"'},
@@ -731,7 +1274,7 @@ app.layout = dbc.Container([
                                     },
                                     {
                                         'if': {'column_id': 'result', 'filter_query': '{result} contains "Win"'},
-                                        'color': '#28A745',
+                                        'color': '#5B6AFE',
                                         'fontWeight': 'bold'
                                     },
                                     {
@@ -797,140 +1340,148 @@ app.layout = dbc.Container([
         Input('initial-load', 'children'),
         Input('opponent-filter-type', 'value'),
         Input('opponent-selection', 'value'),
-        Input('competitiveness-threshold', 'value')
+        Input('competitiveness-threshold', 'value'),
+        Input('team-selection-type', 'value'),
+        Input('team-group-dropdown', 'value')
     ]
 )
-def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_type, opponent_selection, competitiveness_threshold):
+def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_type,
+                    opponent_selection, competitiveness_threshold, team_selection_type, team_group):
     # Use default date range if not provided
     if not start_date:
         start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     if not end_date:
         end_date = datetime.now().strftime('%Y-%m-%d')
-    if not team:
-        team = 'Key West (Combined)'
 
-    # Common filter conditions
+    # Handle team selection (individual team or team group)
+    selected_teams = []
+    if team_selection_type == 'individual':
+        if team:
+            selected_teams = [team]
+        else:
+            selected_teams = ['Key West (Combined)']
+    else:  # team_group
+        if team_group and team_group in team_groups:
+            selected_teams = team_groups[team_group]
+
+        # If no teams in the group, default to Key West (Combined)
+        if not selected_teams:
+            selected_teams = ['Key West (Combined)']
+
+    # Common filter conditions for date
     filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
-
-    # Debug query to check what games are in 2025
-    debug_2025_query = """
-    SELECT date, home_team, away_team, home_score, away_score
-    FROM soccer_data
-    WHERE EXTRACT(YEAR FROM date) = 2025
-    ORDER BY date
-    """
-    debug_2025_df = conn.execute(debug_2025_query).fetchdf()
-    print(f"Debug: Found {len(debug_2025_df)} games in 2025 before filtering")
-    for _, row in debug_2025_df.iterrows():
-        print(f"Debug: 2025 Game - {row['date']} - {row['home_team']} vs {row['away_team']}")
-
-    # Find all possible Key West team variations
-    debug_team_names_query = """
-    SELECT DISTINCT home_team FROM soccer_data WHERE LOWER(home_team) LIKE '%k%w%' OR LOWER(home_team) LIKE '%key%'
-    UNION
-    SELECT DISTINCT away_team FROM soccer_data WHERE LOWER(away_team) LIKE '%k%w%' OR LOWER(away_team) LIKE '%key%'
-    """
-    debug_team_names_df = conn.execute(debug_team_names_query).fetchdf()
-    print(f"Debug: Possible Key West team name variations:")
-    for _, row in debug_team_names_df.iterrows():
-        team_name = row[0]
-        print(f"Debug: Possible team name: {team_name}")
 
     # Print selected date range for debugging
     print(f"Debug: Date range selected: {start_date} to {end_date}")
-
-    # Handle Key West (Combined) option - use LIKE for all Key West teams
-    if team == 'Key West (Combined)':
-        team_filter = """(
-            LOWER(home_team) LIKE '%key west%' OR
-            LOWER(home_team) LIKE '%keywest%' OR
-            LOWER(home_team) LIKE '%key-west%' OR
-            LOWER(home_team) LIKE '%keywest%' OR
-            LOWER(home_team) LIKE '%kw%' OR
-            LOWER(home_team) = 'kwfc' OR
-            LOWER(home_team) LIKE '%key west%' OR
-            LOWER(home_team) LIKE '%keystone%' OR
-            LOWER(away_team) LIKE '%key west%' OR
-            LOWER(away_team) LIKE '%keywest%' OR
-            LOWER(away_team) LIKE '%key-west%' OR
-            LOWER(away_team) LIKE '%keywest%' OR
-            LOWER(away_team) LIKE '%kw%' OR
-            LOWER(away_team) = 'kwfc' OR
-            LOWER(away_team) LIKE '%key west%' OR
-            LOWER(away_team) LIKE '%keystone%'
-        )"""
-
-        # Debug query to check what Key West games are in the dataset
-        debug_keywest_query = f"""
-        SELECT date, home_team, away_team, home_score, away_score
-        FROM soccer_data
-        WHERE {team_filter} AND {filter_conditions}
-        ORDER BY date
-        """
-        debug_keywest_df = conn.execute(debug_keywest_query).fetchdf()
-        print(f"Debug: Found {len(debug_keywest_df)} Key West games after filtering")
-        for _, row in debug_keywest_df.iterrows():
-            print(f"Debug: Key West Game - {row['date']} - {row['home_team']} vs {row['away_team']}")
-
-        # Query to get team match data (both home and away) for all Key West teams
-        matches_query = f"""
-        SELECT date, home_team, away_team, home_score, away_score,
-               CASE
-                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
-                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
-                   ELSE 0
-               END AS team_score,
-               CASE
-                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
-                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
-                   ELSE 0
-               END AS opponent_score,
-               CASE
-                   WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
-                   WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
-                   ELSE ''
-               END AS opponent_team,
-               CASE
-                   WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
-                   WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
-                   WHEN home_score = away_score THEN 'Draw'
-                   ELSE 'Loss'
-               END AS result
-        FROM soccer_data
-        WHERE ({filter_conditions}) AND {team_filter}
-        ORDER BY date DESC
-        """
+    print(f"Debug: Team selection mode: {team_selection_type}")
+    if team_selection_type == 'individual':
+        print(f"Debug: Selected team: {team}")
     else:
-        # Query to get team match data (both home and away) for a single team
-        matches_query = f"""
-        SELECT date, home_team, away_team, home_score, away_score,
-               CASE
-                   WHEN home_team = '{team}' THEN home_score
-                   WHEN away_team = '{team}' THEN away_score
-                   ELSE 0
-               END AS team_score,
-               CASE
-                   WHEN home_team = '{team}' THEN away_score
-                   WHEN away_team = '{team}' THEN home_score
-                   ELSE 0
-               END AS opponent_score,
-               CASE
-                   WHEN home_team = '{team}' THEN away_team
-                   WHEN away_team = '{team}' THEN home_team
-                   ELSE ''
-               END AS opponent_team,
-               CASE
-                   WHEN home_team = '{team}' AND home_score > away_score THEN 'Win'
-                   WHEN away_team = '{team}' AND away_score > home_score THEN 'Win'
-                   WHEN home_score = away_score THEN 'Draw'
-                   ELSE 'Loss'
-               END AS result
-        FROM soccer_data
-        WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
-        ORDER BY date DESC
-        """
+        print(f"Debug: Selected team group: {team_group}, Teams: {selected_teams}")
 
-    matches_df = conn.execute(matches_query).fetchdf()
+    # Build the combined matches dataframe for all selected teams
+    all_matches_df = pd.DataFrame()
+
+    for current_team in selected_teams:
+        # Handle Key West (Combined) option - use LIKE for all Key West teams
+        if current_team == 'Key West (Combined)':
+            team_filter = """(
+                LOWER(home_team) LIKE '%key west%' OR
+                LOWER(home_team) LIKE '%keywest%' OR
+                LOWER(home_team) LIKE '%key-west%' OR
+                LOWER(home_team) LIKE '%keywest%' OR
+                LOWER(home_team) LIKE '%kw%' OR
+                LOWER(home_team) = 'kwfc' OR
+                LOWER(home_team) LIKE '%key west%' OR
+                LOWER(home_team) LIKE '%keystone%' OR
+                LOWER(away_team) LIKE '%key west%' OR
+                LOWER(away_team) LIKE '%keywest%' OR
+                LOWER(away_team) LIKE '%key-west%' OR
+                LOWER(away_team) LIKE '%keywest%' OR
+                LOWER(away_team) LIKE '%kw%' OR
+                LOWER(away_team) = 'kwfc' OR
+                LOWER(away_team) LIKE '%key west%' OR
+                LOWER(away_team) LIKE '%keystone%'
+            )"""
+
+            # Query to get team match data (both home and away) for all Key West teams
+            matches_query = f"""
+            SELECT date, home_team, away_team, home_score, away_score,
+                CASE
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
+                    ELSE 0
+                END AS team_score,
+                CASE
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
+                    ELSE 0
+                END AS opponent_score,
+                CASE
+                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
+                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
+                    ELSE ''
+                END AS opponent_team,
+                CASE
+                    WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
+                    WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
+                    WHEN home_score = away_score THEN 'Draw'
+                    ELSE 'Loss'
+                END AS result
+            FROM soccer_data
+            WHERE ({filter_conditions}) AND {team_filter}
+            ORDER BY date DESC
+            """
+        else:
+            # Query to get team match data (both home and away) for a single team
+            matches_query = f"""
+            SELECT date, home_team, away_team, home_score, away_score,
+                CASE
+                    WHEN home_team = '{current_team}' THEN home_score
+                    WHEN away_team = '{current_team}' THEN away_score
+                    ELSE 0
+                END AS team_score,
+                CASE
+                    WHEN home_team = '{current_team}' THEN away_score
+                    WHEN away_team = '{current_team}' THEN home_score
+                    ELSE 0
+                END AS opponent_score,
+                CASE
+                    WHEN home_team = '{current_team}' THEN away_team
+                    WHEN away_team = '{current_team}' THEN home_team
+                    ELSE ''
+                END AS opponent_team,
+                CASE
+                    WHEN home_team = '{current_team}' AND home_score > away_score THEN 'Win'
+                    WHEN away_team = '{current_team}' AND away_score > home_score THEN 'Win'
+                    WHEN home_score = away_score THEN 'Draw'
+                    ELSE 'Loss'
+                END AS result
+            FROM soccer_data
+            WHERE ({filter_conditions}) AND (home_team = '{current_team}' OR away_team = '{current_team}')
+            ORDER BY date DESC
+            """
+
+        # Get team's matches
+        current_matches_df = conn.execute(matches_query).fetchdf()
+
+        # Add team name to identify which team in the group this is for
+        current_matches_df['team'] = current_team
+
+        # Append to the combined dataframe
+        all_matches_df = pd.concat([all_matches_df, current_matches_df], ignore_index=True)
+
+    # Use the combined dataframe for analysis
+    matches_df = all_matches_df
+
+    # Display label for the team or team group
+    if team_selection_type == 'individual':
+        display_team = 'Key West (Combined)' if team == 'Key West (Combined)' else team
+    else:
+        display_team = f"Team Group: {team_group}"
+
+    # Continue with the rest of the dashboard update logic
+    # The code below is largely unchanged but now works on the combined matches_df
 
     # Apply opponent filter if needed
     display_opponent_analysis = {'display': 'block'}  # Default to show opponent analysis
@@ -1254,7 +1805,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 results_count.get('Loss', 0)
             ],
             hole=0.4,
-            marker=dict(colors=['#28A745', '#5B6AFE', '#DC3545']),
+            marker=dict(colors=['#5B6AFE', '#5B6AFE', '#DC3545']),  # Changed first color from green to blue
             textinfo='label+percent',
             textfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=14),
             hoverinfo='label+value',
@@ -1353,7 +1904,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 x=opponent_stats_df['opponent'],
                 y=opponent_stats_df['win_rate'] * 100,  # Convert to percentage value
                 name='Win Rate',
-                marker_color='#28A745',
+                marker_color='#5B6AFE',  # Changed from green to blue
                 text=[f"{wr*100:.1f}%" for wr in opponent_stats_df['win_rate']],  # Format as percentage
                 textposition='auto',
                 hovertemplate='%{x}<br>Win Rate: %{text}<extra></extra>'
@@ -1382,12 +1933,12 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 yaxis=dict(
                     title={
                         'text': 'Win Rate',
-                        'font': {'color': '#28A745'}
+                        'font': {'color': '#5B6AFE'}  # Changed from green to blue
                     },
                     tickformat='.0f',  # Changed from '.0%' to '.0f'
                     range=[0, 110],    # Changed from [0, 1.1] to [0, 110]
                     side='left',
-                    tickfont=dict(color='#28A745')
+                    tickfont=dict(color='#5B6AFE')
                 ),
                 yaxis2=dict(
                     title={
@@ -1423,7 +1974,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                         values=[row['wins'], row['draws'], row['losses']],
                         name=row['opponent'],
                         title=row['opponent'],
-                        marker_colors=['#28A745', '#5B6AFE', '#DC3545'],
+                        marker_colors=['#5B6AFE', '#5B6AFE', '#DC3545'],  # Changed first color from green to blue
                         visible=(i == 0)  # Only show first opponent by default
                     ))
 
@@ -1467,7 +2018,7 @@ def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_t
                 x=opponent_stats_df['opponent'],
                 y=opponent_stats_df['goals_for'],
                 name='Goals Scored',
-                marker_color='#28A745',
+                marker_color='#5B6AFE',  # Changed from green to blue
                 text=opponent_stats_df['goals_for'],
                 textposition='auto',
                 hovertemplate='%{x}<br>Goals Scored: %{y}<extra></extra>'
@@ -1630,75 +2181,124 @@ def toggle_opponent_controls(filter_type):
         Input('team-dropdown', 'value'),
         Input('date-range', 'start_date'),
         Input('date-range', 'end_date'),
-        Input('competitiveness-threshold', 'value')
+        Input('competitiveness-threshold', 'value'),
+        Input('team-selection-type', 'value'),
+        Input('team-group-dropdown', 'value')
     ]
 )
-def update_opponent_options(filter_type, team, start_date, end_date, competitiveness_threshold):
+def update_opponent_options(opponent_filter_type, team, start_date, end_date, competitiveness_threshold, team_selection_type, team_group):
     # Default opponents (all teams except selected team)
     all_opponents = [{'label': t, 'value': t} for t in teams if t != team and t != 'Key West (Combined)']
 
+    # Handle team group selection
+    selected_teams = []
+    if team_selection_type == 'individual':
+        if team:
+            selected_teams = [team]
+        else:
+            selected_teams = ['Key West (Combined)']
+    else:  # team_group
+        if team_group and team_group in team_groups:
+            selected_teams = team_groups[team_group]
+            # Remove teams in this group from opponents list
+            all_opponents = [op for op in all_opponents if op['value'] not in selected_teams]
+        else:
+            selected_teams = ['Key West (Combined)']
+
     # If filter type is 'worthy', compute worthy opponents
-    if filter_type == 'worthy':
+    if opponent_filter_type == 'worthy':
         if not start_date:
             start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
         if not end_date:
             end_date = datetime.now().strftime('%Y-%m-%d')
 
-        # Get data for the selected team
+        # Get data for the selected team(s)
         filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
 
-        if team == 'Key West (Combined)':
-            team_filter = "(LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%')"
-            opponent_query = f"""
-            SELECT
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
-                END AS opponent,
-                CASE
-                    WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
-                    WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
-                    WHEN home_score = away_score THEN 'Draw'
-                    ELSE 'Loss'
-                END AS result,
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
-                END AS team_score,
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
-                END AS opponent_score
-            FROM soccer_data
-            WHERE ({filter_conditions}) AND {team_filter}
-            """
-        else:
-            opponent_query = f"""
-            SELECT
-                CASE
-                    WHEN home_team = '{team}' THEN away_team
-                    WHEN away_team = '{team}' THEN home_team
-                END AS opponent,
-                CASE
-                    WHEN home_team = '{team}' AND home_score > away_score THEN 'Win'
-                    WHEN away_team = '{team}' AND away_score > home_score THEN 'Win'
-                    WHEN home_score = away_score THEN 'Draw'
-                    ELSE 'Loss'
-                END AS result,
-                CASE
-                    WHEN home_team = '{team}' THEN home_score
-                    WHEN away_team = '{team}' THEN away_score
-                END AS team_score,
-                CASE
-                    WHEN home_team = '{team}' THEN away_score
-                    WHEN away_team = '{team}' THEN home_score
-                END AS opponent_score
-            FROM soccer_data
-            WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
-            """
+        # Initialize dataframes to collect all matches
+        all_opponent_data = pd.DataFrame()
 
-        # Execute query and get opponent data
-        opponent_df = conn.execute(opponent_query).fetchdf()
+        # Process each team in the selection
+        for current_team in selected_teams:
+            if current_team == 'Key West (Combined)':
+                team_filter = """(
+                    LOWER(home_team) LIKE '%key west%' OR
+                    LOWER(home_team) LIKE '%keywest%' OR
+                    LOWER(home_team) LIKE '%key-west%' OR
+                    LOWER(home_team) LIKE '%keywest%' OR
+                    LOWER(home_team) LIKE '%kw%' OR
+                    LOWER(home_team) = 'kwfc' OR
+                    LOWER(home_team) LIKE '%key west%' OR
+                    LOWER(home_team) LIKE '%keystone%' OR
+                    LOWER(away_team) LIKE '%key west%' OR
+                    LOWER(away_team) LIKE '%keywest%' OR
+                    LOWER(away_team) LIKE '%key-west%' OR
+                    LOWER(away_team) LIKE '%keywest%' OR
+                    LOWER(away_team) LIKE '%kw%' OR
+                    LOWER(away_team) = 'kwfc' OR
+                    LOWER(away_team) LIKE '%key west%' OR
+                    LOWER(away_team) LIKE '%keystone%'
+                )"""
+
+                opponent_query = f"""
+                SELECT
+                    CASE
+                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
+                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
+                    END AS opponent,
+                    CASE
+                        WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
+                        WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
+                        WHEN home_score = away_score THEN 'Draw'
+                        ELSE 'Loss'
+                    END AS result,
+                    CASE
+                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
+                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
+                    END AS team_score,
+                    CASE
+                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
+                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
+                    END AS opponent_score
+                FROM soccer_data
+                WHERE ({filter_conditions}) AND {team_filter}
+                """
+            else:
+                opponent_query = f"""
+                SELECT
+                    CASE
+                        WHEN home_team = '{current_team}' THEN away_team
+                        WHEN away_team = '{current_team}' THEN home_team
+                    END AS opponent,
+                    CASE
+                        WHEN home_team = '{current_team}' AND home_score > away_score THEN 'Win'
+                        WHEN away_team = '{current_team}' AND away_score > home_score THEN 'Win'
+                        WHEN home_score = away_score THEN 'Draw'
+                        ELSE 'Loss'
+                    END AS result,
+                    CASE
+                        WHEN home_team = '{current_team}' THEN home_score
+                        WHEN away_team = '{current_team}' THEN away_score
+                    END AS team_score,
+                    CASE
+                        WHEN home_team = '{current_team}' THEN away_score
+                        WHEN away_team = '{current_team}' THEN home_score
+                    END AS opponent_score
+                FROM soccer_data
+                WHERE ({filter_conditions}) AND (home_team = '{current_team}' OR away_team = '{current_team}')
+                """
+
+            # Execute query and get opponent data for this team
+            team_opponent_df = conn.execute(opponent_query).fetchdf()
+
+            # Add team identifier
+            team_opponent_df['team'] = current_team
+
+            # Append to combined dataframe
+            all_opponent_data = pd.concat([all_opponent_data, team_opponent_df], ignore_index=True)
+
+        # Use the combined opponent data for worthy adversary calculation
+        opponent_df = all_opponent_data
 
         # Calculate competitiveness for each opponent
         worthy_opponents = []
@@ -1786,13 +2386,13 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 
         if worthy_opponents:
             # Return all worthy opponents' options and values
-            print(f"Debug: Found {len(worthy_opponents)} worthy opponents")
+            print(f"Debug: Found {len(worthy_opponents)} worthy opponents: {[op['value'] for op in worthy_opponents]}")
             return worthy_opponents, worthy_opponent_values
         else:
-            return [{'label': 'No worthy opponents found with current threshold', 'value': ''}], []
+            return [{'label': 'No worthy opponents found - try lowering threshold', 'value': ''}], []
 
     # For 'specific' option, return all opponents
-    elif filter_type == 'specific':
+    elif opponent_filter_type == 'specific':
         return all_opponents, []  # Empty selection for specific filter
 
     # Default: return empty when 'all' is selected (not needed to select specific opponents)
@@ -1806,6 +2406,193 @@ def update_opponent_options(filter_type, team, start_date, end_date, competitive
 def hide_loading_after_initial_load(initial_load):
     # Hide loading spinner container after initial load
     return {"display": "none"}
+
+# Callback to toggle between team selection and team group selection
+@app.callback(
+    [
+        Output('team-dropdown', 'style'),
+        Output('team-group-selection-div', 'style')
+    ],
+    [Input('team-selection-type', 'value')]
+)
+def toggle_team_selection(selection_type):
+    if selection_type == 'individual':
+        return {'display': 'block'}, {'display': 'none'}
+    else:  # 'group'
+        return {'display': 'none'}, {'display': 'block'}
+
+@app.callback(
+    Output('team-group-dropdown', 'options'),
+    [Input('create-group-button', 'n_clicks'),
+     Input('update-group-button', 'n_clicks'),
+     Input('delete-group-button', 'n_clicks')]
+)
+def update_team_group_options(_1, _2, _3):
+    return [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+
+# Callback to update edit dropdown options
+@app.callback(
+    Output('edit-group-dropdown', 'options'),
+    [Input('create-group-button', 'n_clicks'),
+     Input('update-group-button', 'n_clicks'),
+     Input('delete-group-button', 'n_clicks')]
+)
+def update_edit_group_options(_1, _2, _3):
+    return [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+
+# Callback to load teams for editing when a group is selected
+@app.callback(
+    Output('edit-teams-for-group', 'value'),
+    [Input('edit-group-dropdown', 'value')]
+)
+def load_teams_for_editing(group_name):
+    if not group_name:
+        return []
+
+    try:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Get the group ID
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (group_name,))
+        group_id_row = cursor.fetchone()
+
+        if not group_id_row:
+            return []
+
+        group_id = group_id_row[0]
+
+        # Get team names for this group
+        cursor.execute("SELECT team_name FROM team_group_members WHERE group_id = ?", (group_id,))
+        team_names = [row[0] for row in cursor.fetchall()]
+
+        return team_names
+    except Exception as e:
+        print(f"Error loading teams for editing: {e}")
+        traceback.print_exc()
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+# Function to save team groups to JSON file
+def save_team_groups():
+    with open(TEAM_GROUPS_FILE, 'w') as f:
+        json.dump(team_groups, f)
+
+# Callback to handle creating, updating, and deleting team groups
+@app.callback(
+    Output('group-management-status', 'children'),
+    [
+        Input('create-group-button', 'n_clicks'),
+        Input('update-group-button', 'n_clicks'),
+        Input('delete-group-button', 'n_clicks')
+    ],
+    [
+        State('new-group-name', 'value'),
+        State('teams-for-group', 'value'),
+        State('edit-group-dropdown', 'value'),
+        State('edit-teams-for-group', 'value')
+    ]
+)
+def manage_team_groups(create_clicks, update_clicks, delete_clicks,
+                       new_group_name, new_group_teams, edit_group_name, edit_group_teams):
+    # Determine which button was clicked
+    ctx = callback_context
+    if not ctx.triggered:
+        return ""
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    # For the dbc.Select component we may need to handle the value format differently
+    if new_group_teams and isinstance(new_group_teams, str):
+        new_group_teams = [new_group_teams]
+
+    if edit_group_teams and isinstance(edit_group_teams, str):
+        edit_group_teams = [edit_group_teams]
+
+    # Handle creating a new group
+    if button_id == 'create-group-button' and create_clicks:
+        if not new_group_name:
+            return "Error: Group name cannot be empty"
+        if not new_group_teams or len(new_group_teams) == 0:
+            return "Error: Please select at least one team for the group"
+
+        # Check if group already exists in SQLite
+        groups = get_team_groups()
+        if new_group_name in groups:
+            return f"Error: Group '{new_group_name}' already exists"
+
+        # Create the new group using SQLite function
+        success = add_team_group(new_group_name, new_group_teams)
+        if success:
+            return f"Group '{new_group_name}' created successfully with {len(new_group_teams)} teams"
+        else:
+            return f"Error: Failed to create group '{new_group_name}'"
+
+    # Handle updating an existing group
+    elif button_id == 'update-group-button' and update_clicks:
+        if not edit_group_name:
+            return "Error: Please select a group to update"
+        if not edit_group_teams or len(edit_group_teams) == 0:
+            return "Error: Please select at least one team for the group"
+
+        # Update the group using SQLite function
+        success = update_team_group(edit_group_name, edit_group_teams)
+        if success:
+            return f"Group '{edit_group_name}' updated successfully with {len(edit_group_teams)} teams"
+        else:
+            return f"Error: Failed to update group '{edit_group_name}'"
+
+    # Handle deleting a group
+    elif button_id == 'delete-group-button' and delete_clicks:
+        if not edit_group_name:
+            return "Error: Please select a group to delete"
+
+        # Delete the group using SQLite function
+        success = delete_team_group(edit_group_name)
+        if success:
+            return f"Group '{edit_group_name}' deleted successfully"
+        else:
+            return f"Error: Failed to delete group '{edit_group_name}'"
+
+    return ""
+
+# Initialize SQLite database for team groups
+def init_team_groups_db():
+    try:
+        print(f"Initializing SQLite database at {SQLITE_DB_PATH}")
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+
+        # Create team_groups table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        )
+        ''')
+
+        # Create team_group_members table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_group_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            team_name TEXT NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES team_groups (id) ON DELETE CASCADE,
+            UNIQUE (group_id, team_name)
+        )
+        ''')
+
+        conn.commit()
+        print(f"SQLite database initialized at {SQLITE_DB_PATH}")
+        return True
+    except Exception as e:
+        print(f"Error initializing SQLite database: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8050)
