@@ -95,21 +95,44 @@ def get_db_connection():
     return conn
 
 def create_team_group(name, teams):
-    """Create a new team group."""
-    print(f"Attempting to create team group '{name}' with {len(teams)} teams")
+    """Create a new team group with the specified teams."""
     if not name or not teams:
-        print(f"Invalid team group creation: name='{name}', teams count={len(teams) if teams else 0}")
+        print(f"Error: Cannot create team group with empty name or no teams")
         return False
 
+    # Check if a group with this name already exists
     conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
-        # Insert the team group
+        # Check if the group already exists
+        cursor.execute("SELECT id, name FROM team_groups WHERE name = ?", (name,))
+        existing = cursor.fetchone()
+
+        if existing:
+            group_id = existing[0]
+            print(f"Group '{name}' already exists with ID {group_id}")
+
+            # Option: Return success but only if the group exists with the same teams
+            cursor.execute("SELECT team_name FROM team_group_members WHERE group_id = ? ORDER BY team_name", (group_id,))
+            existing_teams = [row[0] for row in cursor.fetchall()]
+
+            # Check if the teams are the same
+            if set(existing_teams) == set(teams):
+                print(f"Group '{name}' already exists with the same teams")
+                return True
+
+            print(f"Cannot create duplicate group with different teams. The group already has these teams: {existing_teams}")
+            return False
+
+        # Create a transaction
+        conn.execute("BEGIN TRANSACTION")
+
+        # Create the team group
         cursor.execute("INSERT INTO team_groups (name) VALUES (?)", (name,))
         group_id = cursor.lastrowid
 
-        # Insert the team members
+        # Add team members
         for team in teams:
             cursor.execute(
                 "INSERT INTO team_group_members (group_id, team_name) VALUES (?, ?)",
@@ -117,11 +140,11 @@ def create_team_group(name, teams):
             )
 
         conn.commit()
-        print(f"Successfully created team group '{name}' with {len(teams)} teams at {DB_PATH}")
+        print(f"Successfully created team group '{name}' with {len(teams)} teams at {conn.execute('PRAGMA database_list').fetchone()[2]}")
         return True
-    except sqlite3.IntegrityError as e:
-        print(f"Error creating team group: {str(e)}")
+    except sqlite3.Error as e:
         conn.rollback()
+        print(f"Database error creating team group: {str(e)}")
         return False
     finally:
         conn.close()
@@ -276,9 +299,15 @@ teams = teams_df['team'].tolist()
 # Add Key West (Combined) option at the beginning of the list
 teams.insert(0, "Key West (Combined)")
 
-# Get team groups from the database
-team_groups = get_team_groups()
-print(f"Loaded {len(team_groups)} team groups")
+# Initialize team_groups as an empty dictionary
+team_groups = {}
+
+# Initial load of team groups from the database
+try:
+    team_groups = get_team_groups()
+    print(f"Initial load: Found {len(team_groups)} team groups with keys: {list(team_groups.keys())}")
+except Exception as e:
+    print(f"Error during initial team_groups load: {str(e)}")
 
 # Get date range for the date picker
 date_range_query = """
@@ -828,9 +857,9 @@ app.layout = dbc.Container([
                             multi=True,
                             className="mb-2",
                             placeholder="Select teams to include in this group",
-                            style={'position': 'relative', 'zIndex': 1010}
+                            style={'position': 'relative', 'zIndex': 1030}
                         ),
-                    ], style={'position': 'relative', 'zIndex': 1000}),
+                    ], style={'position': 'relative', 'zIndex': 1030}),
                     dbc.Button(
                         "Create Group",
                         id="create-group-button",
@@ -845,7 +874,7 @@ app.layout = dbc.Container([
                             options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
                             placeholder="Select group to edit",
                             className="mb-2",
-                            style={'position': 'relative'},
+                            style={'position': 'relative', 'zIndex': 1020}, # Increased z-index to appear above other elements
                         ),
                         html.Label("Select teams to edit:", className="fw-bold mb-2"),
                         html.Div([
@@ -858,7 +887,7 @@ app.layout = dbc.Container([
                                 placeholder="Select teams to include in this group",
                                 style={'position': 'relative', 'zIndex': 1010}
                             ),
-                        ], style={'position': 'relative', 'zIndex': 1000}),
+                        ], style={'position': 'relative', 'zIndex': 1010}),
                         dbc.ButtonGroup([
                             dbc.Button(
                                 "Update Group",
@@ -872,7 +901,7 @@ app.layout = dbc.Container([
                                 color="danger"
                             ),
                         ], className="mb-3 d-flex"),
-                    ], id="edit-group-div"),
+                    ], id="edit-group-div", style={'position': 'relative', 'zIndex': 1000}),
 
                     html.Div(id="group-management-status", className="small text-muted my-2")
                 ], className="mb-4"),
@@ -2203,22 +2232,76 @@ def toggle_team_selection_type(selection_type):
     else:  # 'group'
         return {'display': 'none'}, {'display': 'block'}
 
-# Callback to populate edit teams dropdown when a group is selected
 @app.callback(
-    Output('edit-teams-for-group', 'value'),
-    [Input('edit-group-dropdown', 'value')]
+    [Output('edit-teams-for-group', 'value'),
+     Output('edit-group-dropdown', 'options')],
+    [Input('edit-group-dropdown', 'value'),
+     Input('group-management-status', 'children')]  # Use this to trigger refresh when team groups change
 )
-def populate_edit_teams(group_name):
-    if not group_name or group_name not in team_groups:
-        return []
-    return team_groups[group_name]
+def populate_edit_teams(group_name, status_change):
+    """Populate the edit teams dropdown with the teams from the selected group."""
+    # First update the dropdown options with all available team groups
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get all team groups for the dropdown with debug info
+        cursor.execute("SELECT id, name FROM team_groups ORDER BY name")
+        all_groups = cursor.fetchall()
+        print(f"Database contains {len(all_groups)} team groups: {all_groups}")
+
+        group_names = [group[1] for group in all_groups]
+        group_options = [{'label': name, 'value': name} for name in group_names]
+        print(f"Refreshed edit-group-dropdown with {len(group_names)} options: {group_names}")
+
+        # Update the global team_groups dictionary (important for consistency)
+        global team_groups
+        team_groups = get_team_groups()
+        print(f"Updated global team_groups, now contains: {list(team_groups.keys())}")
+    except sqlite3.Error as e:
+        print(f"Error getting team groups: {str(e)}")
+        group_options = []
+    finally:
+        conn.close()
+
+    # Early return if no group is selected
+    if not group_name:
+        return [], group_options
+
+    # Query the database directly to get the team members
+    print(f"Retrieving team members for group '{group_name}'")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get the group ID
+        cursor.execute("SELECT id FROM team_groups WHERE name = ?", (group_name,))
+        group_row = cursor.fetchone()
+
+        if not group_row:
+            print(f"Group '{group_name}' not found in database")
+            return [], group_options
+
+        group_id = group_row[0]
+
+        # Get all teams in the group
+        cursor.execute("SELECT team_name FROM team_group_members WHERE group_id = ? ORDER BY team_name", (group_id,))
+        teams = [row[0] for row in cursor.fetchall()]
+
+        print(f"Found {len(teams)} teams for group '{group_name}': {teams}")
+        return teams, group_options
+    except sqlite3.Error as e:
+        print(f"Error retrieving team members for group '{group_name}': {str(e)}")
+        return [], group_options
+    finally:
+        conn.close()
 
 # Callback to create a new team group
 @app.callback(
     [Output('group-management-status', 'children'),
      Output('new-group-name', 'value'),
      Output('teams-for-group', 'value'),
-     Output('edit-group-dropdown', 'options'),
      Output('team-group-dropdown', 'options'),
      Output('team-group-dropdown', 'value')],
     [Input('create-group-button', 'n_clicks'),
@@ -2305,9 +2388,9 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
             else:
                 status = f"Failed to delete team group '{edit_name}'."
 
-    # Update dropdown options with refreshed team groups
-    print(f"Updating dropdowns with team groups: {list(team_groups.keys())}")
-    group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+    # Update dropdown options for team group dropdown
+    print(f"Updating team group dropdown with team groups: {list(team_groups.keys())}")
+    team_group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
 
     # Make sure the selected group still exists
     if selected_group and selected_group not in team_groups:
@@ -2319,7 +2402,7 @@ def manage_team_groups(create_clicks, update_clicks, delete_clicks,
             print("No groups available, setting selection to None")
 
     print(f"Final selected group: {selected_group}")
-    return status, new_name_value, new_teams_value, group_options, group_options, selected_group
+    return status, new_name_value, new_teams_value, team_group_options, selected_group
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8050)
