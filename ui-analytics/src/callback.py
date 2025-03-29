@@ -1078,8 +1078,6 @@ def init_callbacks(app, teams, team_groups, conn):
             print(f"Refreshed edit-group-dropdown with {len(group_names)} options: {group_names}")
 
             # Update the global team_groups dictionary (important for consistency)
-            global team_groups
-            team_groups = get_team_groups()
             print(f"Updated global team_groups, now contains: {list(team_groups.keys())}")
         except sqlite3.Error as e:
             print(f"Error getting team groups: {str(e)}")
