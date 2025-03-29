@@ -5,6 +5,19 @@ import plotly.graph_objects as go
 import pandas as pd
 import sqlite3
 from src.db import get_db_connection, get_team_groups
+from src.queries import (
+    get_key_west_team_filter,
+    get_debug_key_west_query,
+    get_combined_matches_query,
+    get_team_matches_query,
+    get_opponent_query_for_key_west,
+    get_opponent_query_for_team
+)
+from src.util import (
+    normalize_team_names_in_dataframe,
+    filter_matches_by_opponents,
+    identify_worthy_opponents
+)
 
 
 def init_callbacks(app, teams, team_groups, conn):
@@ -37,18 +50,65 @@ def init_callbacks(app, teams, team_groups, conn):
         ]
     )
     def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_type, opponent_selection, competitiveness_threshold):
+        # Set default values for inputs
+        start_date = start_date or (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+        end_date = end_date or datetime.now().strftime('%Y-%m-%d')
+        team = team or 'Key West (Combined)'
 
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-        if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        if not team:
-            team = 'Key West (Combined)'
-
-
+        # Create date filter condition for SQL queries
         filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
+        print(f"Debug: Date range selected: {start_date} to {end_date}")
 
+        # Run debug queries to check data
+        run_debug_queries(conn, filter_conditions)
 
+        # Get match data for the selected team
+        matches_df = get_team_match_data(conn, team, filter_conditions)
+
+        # Apply opponent filtering
+        filtered_matches_df, display_opponent_analysis = filter_matches_by_filter_type(
+            matches_df,
+            opponent_filter_type,
+            opponent_selection,
+            competitiveness_threshold
+        )
+
+        # Calculate dashboard metrics
+        dashboard_metrics = calculate_dashboard_metrics(filtered_matches_df)
+
+        # Generate visualizations
+        visualizations = generate_visualizations(filtered_matches_df, team, dashboard_metrics)
+
+        # Generate opponent analysis
+        opponent_analysis = generate_opponent_analysis(
+            filtered_matches_df,
+            opponent_filter_type,
+            opponent_selection,
+            competitiveness_threshold
+        )
+
+        # Combine results and return
+        return (
+            dashboard_metrics['games_played'],
+            dashboard_metrics['win_rate_value'],
+            dashboard_metrics['loss_rate_value'],
+            str(dashboard_metrics['goals_scored']),
+            str(dashboard_metrics['goals_conceded']),
+            str(dashboard_metrics['goal_diff']),
+            visualizations['performance_fig'],
+            dashboard_metrics['table_data'],
+            visualizations['goal_fig'],
+            visualizations['pie_fig'],
+            opponent_analysis['analysis_text'],
+            opponent_analysis['comparison_chart'],
+            opponent_analysis['win_rate_chart'],
+            opponent_analysis['goal_diff_chart'],
+            display_opponent_analysis
+        )
+
+    def run_debug_queries(conn, filter_conditions):
+        """Run debug queries to check data quality and availability."""
+        # Debug query for 2025 games
         debug_2025_query = """
         SELECT date, home_team, away_team, home_score, away_score
         FROM soccer_data
@@ -60,7 +120,7 @@ def init_callbacks(app, teams, team_groups, conn):
         for _, row in debug_2025_df.iterrows():
             print(f"Debug: 2025 Game - {row['date']} - {row['home_team']} vs {row['away_team']}")
 
-
+        # Debug query for team name variations
         debug_team_names_query = """
         SELECT DISTINCT home_team FROM soccer_data WHERE LOWER(home_team) LIKE '%k%w%' OR LOWER(home_team) LIKE '%key%'
         UNION
@@ -72,193 +132,67 @@ def init_callbacks(app, teams, team_groups, conn):
             team_name = row[0]
             print(f"Debug: Possible team name: {team_name}")
 
-
-        print(f"Debug: Date range selected: {start_date} to {end_date}")
-
-
+    def get_team_match_data(conn, team, filter_conditions):
+        """Get match data for the selected team."""
         if team == 'Key West (Combined)':
-            team_filter = """(
-                LOWER(home_team) LIKE '%key west%' OR
-                LOWER(home_team) LIKE '%keywest%' OR
-                LOWER(home_team) LIKE '%key-west%' OR
-                LOWER(home_team) LIKE '%keywest%' OR
-                LOWER(home_team) LIKE '%kw%' OR
-                LOWER(home_team) = 'kwfc' OR
-                LOWER(home_team) LIKE '%key west%' OR
-                LOWER(home_team) LIKE '%keystone%' OR
-                LOWER(away_team) LIKE '%key west%' OR
-                LOWER(away_team) LIKE '%keywest%' OR
-                LOWER(away_team) LIKE '%key-west%' OR
-                LOWER(away_team) LIKE '%keywest%' OR
-                LOWER(away_team) LIKE '%kw%' OR
-                LOWER(away_team) = 'kwfc' OR
-                LOWER(away_team) LIKE '%key west%' OR
-                LOWER(away_team) LIKE '%keystone%'
-            )"""
+            team_filter = get_key_west_team_filter()
 
-
-            debug_keywest_query = f"""
-            SELECT date, home_team, away_team, home_score, away_score
-            FROM soccer_data
-            WHERE {team_filter} AND {filter_conditions}
-            ORDER BY date
-            """
+            # Debug query for Key West games
+            debug_keywest_query = get_debug_key_west_query(filter_conditions)
             debug_keywest_df = conn.execute(debug_keywest_query).fetchdf()
             print(f"Debug: Found {len(debug_keywest_df)} Key West games after filtering")
             for _, row in debug_keywest_df.iterrows():
                 print(f"Debug: Key West Game - {row['date']} - {row['home_team']} vs {row['away_team']}")
 
-
-            matches_query = f"""
-            SELECT date, home_team, away_team, home_score, away_score,
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
-                    ELSE 0
-                END AS team_score,
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
-                    ELSE 0
-                END AS opponent_score,
-                CASE
-                    WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
-                    WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
-                    ELSE ''
-                END AS opponent_team,
-                CASE
-                    WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
-                    WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
-                    WHEN home_score = away_score THEN 'Draw'
-                    ELSE 'Loss'
-                END AS result
-            FROM soccer_data
-            WHERE ({filter_conditions}) AND {team_filter}
-            ORDER BY date DESC
-            """
+            matches_query = get_combined_matches_query(team, filter_conditions)
         else:
+            matches_query = get_team_matches_query(team, filter_conditions)
 
-            matches_query = f"""
-            SELECT date, home_team, away_team, home_score, away_score,
-                CASE
-                    WHEN home_team = '{team}' THEN home_score
-                    WHEN away_team = '{team}' THEN away_score
-                    ELSE 0
-                END AS team_score,
-                CASE
-                    WHEN home_team = '{team}' THEN away_score
-                    WHEN away_team = '{team}' THEN home_score
-                    ELSE 0
-                END AS opponent_score,
-                CASE
-                    WHEN home_team = '{team}' THEN away_team
-                    WHEN away_team = '{team}' THEN home_team
-                    ELSE ''
-                END AS opponent_team,
-                CASE
-                    WHEN home_team = '{team}' AND home_score > away_score THEN 'Win'
-                    WHEN away_team = '{team}' AND away_score > home_score THEN 'Win'
-                    WHEN home_score = away_score THEN 'Draw'
-                    ELSE 'Loss'
-                END AS result
-            FROM soccer_data
-            WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
-            ORDER BY date DESC
-            """
+        return conn.execute(matches_query).fetchdf()
 
-        matches_df = conn.execute(matches_query).fetchdf()
+    def filter_matches_by_filter_type(matches_df, filter_type, opponent_selection, competitiveness_threshold):
+        """
+        Filter matches based on the selected filter type.
 
+        Args:
+            matches_df: DataFrame containing match data
+            filter_type: Type of filter to apply ('specific', 'worthy', or 'all')
+            opponent_selection: List of selected opponent teams
+            competitiveness_threshold: Threshold for worthy opponents
 
+        Returns:
+            Tuple of (filtered_matches_df, display_opponent_analysis)
+        """
+        filtered_matches_df = matches_df.copy()
         display_opponent_analysis = {'display': 'block'}
 
-
-        filtered_matches_df = matches_df.copy()
-
-        if opponent_filter_type == 'specific' and opponent_selection and len(opponent_selection) > 0:
-
-
+        if filter_type == 'specific' and opponent_selection and len(opponent_selection) > 0:
+            # Filter to include only matches against specific opponents
             if not filtered_matches_df.empty:
-                filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
-
-                normalized_selection = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in opponent_selection]
-
-
-                mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_selection))
-                filtered_matches_df = filtered_matches_df[mask]
-
+                filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
+                filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
                 print(f"Debug: Selected specific opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
-        elif opponent_filter_type == 'worthy':
 
+        elif filter_type == 'worthy':
             if opponent_selection and len(opponent_selection) > 0:
-
+                # Filter to include only matches against specific worthy opponents
                 if not filtered_matches_df.empty:
-                    filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
-
-                    normalized_selection = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in opponent_selection]
-
-
-                    mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_selection))
-                    filtered_matches_df = filtered_matches_df[mask]
-
+                    filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
+                    filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
                     print(f"Debug: Selected worthy opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
             else:
+                # Automatically identify worthy opponents
+                if not filtered_matches_df.empty:
+                    worthy_opponents = identify_worthy_opponents(filtered_matches_df, competitiveness_threshold)
 
-                opponent_groups = filtered_matches_df.groupby('opponent_team')
-                worthy_opponents = []
-                opponents_with_wins = set()
-
-                # First pass - find opponents with wins against our team
-                for opponent, group in opponent_groups:
-                    opponent_wins = len(group[group['result'] == 'Loss'])
-                    if opponent_wins > 0:
-                        opponents_with_wins.add(opponent)
-                        worthy_opponents.append(opponent)
-                        print(f"Debug: Dashboard - Auto-including opponent {opponent} who defeated us {opponent_wins} times")
-
-                # Second pass - evaluate other opponents based on competitiveness
-                for opponent, group in opponent_groups:
-                    # Skip opponents who already defeated us (already included)
-                    if opponent in opponents_with_wins:
-                        continue
-
-                    if len(group) >= 1:  # Reduced minimum match threshold to 1
-                        # Calculate results against this opponent
-                        wins = len(group[group['result'] == 'Win'])
-                        losses = len(group[group['result'] == 'Loss'])
-                        loss_rate = losses / len(group)
-
-                        # Calculate average goal differential (absolute value)
-                        group['goal_diff'] = abs(group['team_score'] - group['opponent_score'])
-                        avg_goal_diff = group['goal_diff'].mean()
-
-                        # New competitiveness calculation:
-                        # - Higher score for teams you've lost to (loss_rate factor)
-                        # - Higher score for teams with closer goal difference (inverse relationship)
-                        loss_factor = loss_rate * 100  # 0-100 based on loss percentage
-                        margin_factor = max(0, 100 - min(avg_goal_diff * 20, 100))  # 0-100 based on goal margin
-
-                        # Combined score: weight loss_factor more heavily (70%) than margin_factor (30%)
-                        competitiveness_score = (loss_factor * 0.7) + (margin_factor * 0.3)
-
-                        print(f"Debug: Dashboard - Evaluating opponent: {opponent}, Score: {competitiveness_score:.2f}, Threshold: {competitiveness_threshold}")
-
-                        # Threshold now works as: higher threshold = more challenging opponents
-                        if competitiveness_score >= competitiveness_threshold:
-                            worthy_opponents.append(opponent)
-
-                if worthy_opponents:
-                    # Filter using normalized names for case-insensitive matching
-                    filtered_matches_df['normalized_opponent'] = filtered_matches_df['opponent_team'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
-                    normalized_worthy = [op.lower().replace(' ', '').replace('-', '').replace('_', '') for op in worthy_opponents]
-
-                    mask = filtered_matches_df['normalized_opponent'].apply(lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_worthy))
-                    filtered_matches_df = filtered_matches_df[mask]
-
-                    print(f"Debug: Dashboard - Found {len(worthy_opponents)} worthy opponents: {worthy_opponents}")
-                else:
-                    # If no worthy opponents found, keep the filtered dataframe empty
-                    filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
-                    print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
+                    if worthy_opponents:
+                        filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
+                        filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, worthy_opponents)
+                        print(f"Debug: Dashboard - Found {len(worthy_opponents)} worthy opponents: {worthy_opponents}")
+                    else:
+                        # If no worthy opponents found, keep the filtered dataframe empty
+                        filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
+                        print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
 
         # Remove the normalized_opponent column if it exists before further processing
         if 'normalized_opponent' in filtered_matches_df.columns:
@@ -268,7 +202,18 @@ def init_callbacks(app, teams, team_groups, conn):
         if len(filtered_matches_df) == 0:
             display_opponent_analysis = {'display': 'none'}
 
-        # Calculate summary statistics from the filtered dataset
+        return filtered_matches_df, display_opponent_analysis
+
+    def calculate_dashboard_metrics(filtered_matches_df):
+        """
+        Calculate dashboard metrics from the filtered matches data.
+
+        Args:
+            filtered_matches_df: DataFrame containing filtered match data
+
+        Returns:
+            Dictionary of calculated metrics
+        """
         games_played = len(filtered_matches_df)
 
         if games_played > 0:
@@ -304,6 +249,28 @@ def init_callbacks(app, teams, team_groups, conn):
                 'opponent': row['opponent_team']
             })
 
+        return {
+            'games_played': games_played,
+            'win_rate_value': win_rate_value,
+            'loss_rate_value': loss_rate_value,
+            'goals_scored': goals_scored,
+            'goals_conceded': goals_conceded,
+            'goal_diff': goal_diff,
+            'table_data': table_data
+        }
+
+    def generate_visualizations(filtered_matches_df, team, dashboard_metrics):
+        """
+        Generate visualizations for the dashboard.
+
+        Args:
+            filtered_matches_df: DataFrame containing filtered match data
+            team: Selected team name
+            dashboard_metrics: Dictionary of calculated metrics
+
+        Returns:
+            Dictionary of visualization figures
+        """
         # Sort data by date (newest first)
         if not filtered_matches_df.empty:
             sorted_df = filtered_matches_df.sort_values(by='date', ascending=True)  # Sort in chronological order for charts
@@ -311,6 +278,25 @@ def init_callbacks(app, teams, team_groups, conn):
             sorted_df = pd.DataFrame(columns=filtered_matches_df.columns)  # Empty DataFrame with same columns
 
         # Create performance trend chart
+        performance_fig = create_performance_trend_chart(sorted_df, team)
+
+        # Create goal statistics chart
+        goal_fig = create_goal_stats_chart(filtered_matches_df,
+                                          dashboard_metrics['goals_scored'],
+                                          dashboard_metrics['goals_conceded'],
+                                          dashboard_metrics['goal_diff'])
+
+        # Create goal statistics pie chart
+        pie_fig = create_result_distribution_pie_chart(filtered_matches_df)
+
+        return {
+            'performance_fig': performance_fig,
+            'goal_fig': goal_fig,
+            'pie_fig': pie_fig
+        }
+
+    def create_performance_trend_chart(sorted_df, team):
+        """Create a performance trend chart showing cumulative wins, draws, and losses."""
         performance_fig = go.Figure()
 
         if not sorted_df.empty:
@@ -404,7 +390,10 @@ def init_callbacks(app, teams, team_groups, conn):
             )
         )
 
-        # Create goal statistics chart with unified styling
+        return performance_fig
+
+    def create_goal_stats_chart(filtered_matches_df, goals_scored, goals_conceded, goal_diff):
+        """Create a goal statistics chart."""
         goal_stats = pd.DataFrame([
             {'Metric': 'Goals Scored', 'Value': goals_scored},
             {'Metric': 'Goals Conceded', 'Value': goals_conceded},
@@ -475,7 +464,10 @@ def init_callbacks(app, teams, team_groups, conn):
             bargap=0.3
         )
 
-        # Create goal statistics pie chart
+        return goal_fig
+
+    def create_result_distribution_pie_chart(filtered_matches_df):
+        """Create a pie chart showing the distribution of match results."""
         pie_fig = go.Figure()
 
         if not filtered_matches_df.empty:
@@ -525,277 +517,276 @@ def init_callbacks(app, teams, team_groups, conn):
             margin=dict(l=10, r=10, t=80, b=40)
         )
 
-        # Opponent Analysis Section
+        return pie_fig
+
+    def generate_opponent_analysis(filtered_matches_df, opponent_filter_type, opponent_selection, competitiveness_threshold):
+        """
+        Generate opponent analysis visualizations and text.
+
+        Args:
+            filtered_matches_df: DataFrame containing filtered match data
+            opponent_filter_type: Type of opponent filter applied
+            opponent_selection: List of selected opponents
+            competitiveness_threshold: Threshold for worthy opponents
+
+        Returns:
+            Dictionary of opponent analysis components
+        """
+        # Set default empty visualization objects
+        opponent_comparison_chart = go.Figure()
+        opponent_win_rate_chart = go.Figure()
+        opponent_goal_diff_chart = go.Figure()
+
+        # Generate appropriate analysis text based on filter type
         if opponent_filter_type == 'all':
             opponent_analysis_text = f"Analysis of all {len(filtered_matches_df['opponent_team'].unique())} opponents"
-        elif opponent_filter_type == 'worthy' and 'worthy_opponents' in locals():
-            opponent_analysis_text = f"Analysis of {len(worthy_opponents)} worthy adversaries (competitiveness ≥ {competitiveness_threshold}%)"
+        elif opponent_filter_type == 'worthy' and opponent_selection:
+            opponent_analysis_text = f"Analysis of selected worthy adversaries: {', '.join(opponent_selection)}"
+        elif opponent_filter_type == 'worthy':
+            opponent_analysis_text = f"Analysis of worthy adversaries (competitiveness ≥ {competitiveness_threshold}%)"
         elif opponent_filter_type == 'specific' and opponent_selection:
             opponent_analysis_text = f"Analysis of selected opponent(s): {', '.join(opponent_selection)}"
         else:
             opponent_analysis_text = "No opponent filter selected"
 
-        # Opponent Comparison Charts
-        opponent_comparison_chart = go.Figure()
-        opponent_win_rate_chart = go.Figure()
-        opponent_goal_diff_chart = go.Figure()
-
+        # Generate opponent charts if we have data
         if len(filtered_matches_df) > 0:
-            # Group data by opponent
-            opponent_groups = filtered_matches_df.groupby('opponent_team')
-
-            # Collect opponent stats
-            opponent_stats_list = []
-
-            for opponent, group in opponent_groups:
-                total_matches = len(group)
-                total_wins = len(group[group['result'] == 'Win'])
-                total_losses = len(group[group['result'] == 'Loss'])
-                total_draws = len(group[group['result'] == 'Draw'])
-
-                win_rate_opp = total_wins / total_matches if total_matches > 0 else 0
-                loss_rate_opp = total_losses / total_matches if total_matches > 0 else 0
-                draw_rate_opp = total_draws / total_matches if total_matches > 0 else 0
-
-                total_goals_for = group['team_score'].sum()
-                total_goals_against = group['opponent_score'].sum()
-                goal_difference = total_goals_for - total_goals_against
-
-                opponent_stats_list.append({
-                    'opponent': opponent,
-                    'total_matches': total_matches,
-                    'wins': total_wins,
-                    'losses': total_losses,
-                    'draws': total_draws,
-                    'win_rate': win_rate_opp,
-                    'loss_rate': loss_rate_opp,
-                    'draw_rate': draw_rate_opp,
-                    'goals_for': total_goals_for,
-                    'goals_against': total_goals_against,
-                    'goal_difference': goal_difference
-                })
-
-            # Create DataFrame from stats
-            opponent_stats_df = pd.DataFrame(opponent_stats_list)
+            # Create opponent comparison charts using the filtered data
+            opponent_stats_df = generate_opponent_stats_dataframe(filtered_matches_df)
 
             if not opponent_stats_df.empty:
-                # Sort by win rate for the comparison chart
-                opponent_stats_df = opponent_stats_df.sort_values('win_rate', ascending=False)
-
-                # Create opponent comparison chart (win rate vs. matches played)
-                opponent_comparison_chart = go.Figure()
-
-                opponent_comparison_chart.add_trace(go.Bar(
-                    x=opponent_stats_df['opponent'],
-                    y=opponent_stats_df['win_rate'] * 100,  # Convert to percentage value
-                    name='Win Rate',
-                    marker_color='#28A745',
-                    text=[f"{wr*100:.1f}%" for wr in opponent_stats_df['win_rate']],  # Format as percentage
-                    textposition='auto',
-                    hovertemplate='%{x}<br>Win Rate: %{text}<extra></extra>'
-                ))
-
-                opponent_comparison_chart.add_trace(go.Bar(
-                    x=opponent_stats_df['opponent'],
-                    y=opponent_stats_df['total_matches'],
-                    name='Matches Played',
-                    marker_color='#5B6AFE',
-                    text=opponent_stats_df['total_matches'],
-                    textposition='auto',
-                    yaxis='y2',
-                    hovertemplate='%{x}<br>Matches: %{y}<extra></extra>'
-                ))
-
-                opponent_comparison_chart.update_layout(
-                    title={
-                        'text': 'Performance Against Opponents',
-                        'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                    },
-                    xaxis_title={
-                        'text': 'Opponent',
-                        'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                    },
-                    yaxis=dict(
-                        title={
-                            'text': 'Win Rate',
-                            'font': {'color': '#28A745'}
-                        },
-                        tickformat='.0f',  # Changed from '.0%' to '.0f'
-                        range=[0, 110],    # Changed from [0, 1.1] to [0, 110]
-                        side='left',
-                        tickfont=dict(color='#28A745')
-                    ),
-                    yaxis2=dict(
-                        title={
-                            'text': 'Matches Played',
-                            'font': {'color': '#5B6AFE'}
-                        },
-                        range=[0, max(opponent_stats_df['total_matches']) * 1.2],
-                        side='right',
-                        overlaying='y',
-                        tickfont=dict(color='#5B6AFE')
-                    ),
-                    barmode='group',
-                    plot_bgcolor='white',
-                    paper_bgcolor='white',
-                    legend=dict(
-                        orientation='h',
-                        yanchor='bottom',
-                        y=1.02,
-                        xanchor='center',
-                        x=0.5
-                    ),
-                    margin=dict(l=60, r=60, t=80, b=60)
-                )
-
-                # Create win/loss breakdown pie charts for each opponent
-                if len(opponent_stats_df) > 0:
-                    opponent_win_rate_chart = go.Figure()
-
-                    # Create a separate pie chart for each opponent
-                    for i, row in opponent_stats_df.iterrows():
-                        opponent_win_rate_chart.add_trace(go.Pie(
-                            labels=['Wins', 'Draws', 'Losses'],
-                            values=[row['wins'], row['draws'], row['losses']],
-                            name=row['opponent'],
-                            title=row['opponent'],
-                            marker_colors=['#28A745', '#5B6AFE', '#DC3545'],
-                            visible=(i == 0)  # Only show first opponent by default
-                        ))
-
-                    # Add dropdown for opponent selection
-                    buttons = []
-                    for i, row in opponent_stats_df.iterrows():
-                        visibility = [j == i for j in range(len(opponent_stats_df))]
-                        buttons.append(dict(
-                            method='update',
-                            label=row['opponent'],
-                            args=[{'visible': visibility},
-                                {'title': {'text': f'Win/Loss Breakdown vs {row["opponent"]}',
-                                            'font': {'size': 20, 'color': '#6F42C1'}}}]
-                        ))
-
-                    opponent_win_rate_chart.update_layout(
-                        title={
-                            'text': f'Win/Loss Breakdown vs {opponent_stats_df.iloc[0]["opponent"]}',
-                            'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                        },
-                        updatemenus=[{
-                            'buttons': buttons,
-                            'direction': 'down',
-                            'showactive': True,
-                            'x': 0.5,
-                            'y': 1.15,
-                            'xanchor': 'center',
-                            'yanchor': 'top'
-                        }],
-                        plot_bgcolor='white',
-                        paper_bgcolor='white',
-                        margin=dict(l=10, r=10, t=120, b=40)
-                    )
-
-                # Create goal statistics bar chart by opponent
-                opponent_stats_df = opponent_stats_df.sort_values('goal_difference', ascending=False)
-
-                opponent_goal_diff_chart = go.Figure()
-
-                opponent_goal_diff_chart.add_trace(go.Bar(
-                    x=opponent_stats_df['opponent'],
-                    y=opponent_stats_df['goals_for'],
-                    name='Goals Scored',
-                    marker_color='#28A745',
-                    text=opponent_stats_df['goals_for'],
-                    textposition='auto',
-                    hovertemplate='%{x}<br>Goals Scored: %{y}<extra></extra>'
-                ))
-
-                opponent_goal_diff_chart.add_trace(go.Bar(
-                    x=opponent_stats_df['opponent'],
-                    y=opponent_stats_df['goals_against'],
-                    name='Goals Conceded',
-                    marker_color='#DC3545',
-                    text=opponent_stats_df['goals_against'],
-                    textposition='auto',
-                    hovertemplate='%{x}<br>Goals Conceded: %{y}<extra></extra>'
-                ))
-
-                opponent_goal_diff_chart.update_layout(
-                    title={
-                        'text': 'Goal Performance by Opponent',
-                        'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                    },
-                    xaxis_title={
-                        'text': 'Opponent',
-                        'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                    },
-                    yaxis_title={
-                        'text': 'Goals',
-                        'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
-                    },
-                    barmode='group',
-                    plot_bgcolor='white',
-                    paper_bgcolor='white',
-                    legend=dict(
-                        orientation='h',
-                        yanchor='bottom',
-                        y=1.02,
-                        xanchor='center',
-                        x=0.5
-                    ),
-                    margin=dict(l=60, r=30, t=80, b=60)
-                )
-            else:
-                # Empty figures for no opponent data
-                opponent_comparison_chart.update_layout(
-                    title="No opponent data available",
-                    xaxis=dict(showticklabels=False),
-                    yaxis=dict(showticklabels=False)
-                )
-                opponent_win_rate_chart.update_layout(
-                    title="No opponent data available",
-                    xaxis=dict(showticklabels=False),
-                    yaxis=dict(showticklabels=False)
-                )
-                opponent_goal_diff_chart.update_layout(
-                    title="No opponent data available",
-                    xaxis=dict(showticklabels=False),
-                    yaxis=dict(showticklabels=False)
-                )
+                opponent_comparison_chart = create_opponent_comparison_chart(opponent_stats_df)
+                opponent_win_rate_chart = create_opponent_win_rate_chart(opponent_stats_df)
+                opponent_goal_diff_chart = create_opponent_goal_diff_chart(opponent_stats_df)
         else:
-            # Empty figures for no data
-            opponent_comparison_chart.update_layout(
-                title="No match data available",
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            opponent_win_rate_chart.update_layout(
-                title="No match data available",
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            opponent_goal_diff_chart.update_layout(
-                title="No match data available",
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
+            # Empty figures with appropriate messages
+            for chart in [opponent_comparison_chart, opponent_win_rate_chart, opponent_goal_diff_chart]:
+                chart.update_layout(
+                    title="No match data available",
+                    xaxis=dict(showticklabels=False),
+                    yaxis=dict(showticklabels=False)
+                )
 
-        return (
-            games_played,
-            win_rate_value,
-            loss_rate_value,
-            str(goals_scored),
-            str(goals_conceded),
-            str(goal_diff),
-            performance_fig,
-            table_data,
-            goal_fig,
-            pie_fig,
-            opponent_analysis_text,
-            opponent_comparison_chart,
-            opponent_win_rate_chart,
-            opponent_goal_diff_chart,
-            display_opponent_analysis
+        return {
+            'analysis_text': opponent_analysis_text,
+            'comparison_chart': opponent_comparison_chart,
+            'win_rate_chart': opponent_win_rate_chart,
+            'goal_diff_chart': opponent_goal_diff_chart
+        }
+
+    def generate_opponent_stats_dataframe(filtered_matches_df):
+        """Generate a DataFrame with opponent statistics."""
+        # Group data by opponent
+        opponent_groups = filtered_matches_df.groupby('opponent_team')
+
+        # Collect opponent stats
+        opponent_stats_list = []
+
+        for opponent, group in opponent_groups:
+            total_matches = len(group)
+            total_wins = len(group[group['result'] == 'Win'])
+            total_losses = len(group[group['result'] == 'Loss'])
+            total_draws = len(group[group['result'] == 'Draw'])
+
+            win_rate_opp = total_wins / total_matches if total_matches > 0 else 0
+            loss_rate_opp = total_losses / total_matches if total_matches > 0 else 0
+            draw_rate_opp = total_draws / total_matches if total_matches > 0 else 0
+
+            total_goals_for = group['team_score'].sum()
+            total_goals_against = group['opponent_score'].sum()
+            goal_difference = total_goals_for - total_goals_against
+
+            opponent_stats_list.append({
+                'opponent': opponent,
+                'total_matches': total_matches,
+                'wins': total_wins,
+                'losses': total_losses,
+                'draws': total_draws,
+                'win_rate': win_rate_opp,
+                'loss_rate': loss_rate_opp,
+                'draw_rate': draw_rate_opp,
+                'goals_for': total_goals_for,
+                'goals_against': total_goals_against,
+                'goal_difference': goal_difference
+            })
+
+        # Create DataFrame from stats
+        return pd.DataFrame(opponent_stats_list)
+
+    def create_opponent_comparison_chart(opponent_stats_df):
+        """Create a comparison chart of win rate vs. matches played by opponent."""
+        # Sort by win rate for the comparison chart
+        opponent_stats_df = opponent_stats_df.sort_values('win_rate', ascending=False)
+
+        opponent_comparison_chart = go.Figure()
+
+        opponent_comparison_chart.add_trace(go.Bar(
+            x=opponent_stats_df['opponent'],
+            y=opponent_stats_df['win_rate'] * 100,  # Convert to percentage value
+            name='Win Rate',
+            marker_color='#28A745',
+            text=[f"{wr*100:.1f}%" for wr in opponent_stats_df['win_rate']],  # Format as percentage
+            textposition='auto',
+            hovertemplate='%{x}<br>Win Rate: %{text}<extra></extra>'
+        ))
+
+        opponent_comparison_chart.add_trace(go.Bar(
+            x=opponent_stats_df['opponent'],
+            y=opponent_stats_df['total_matches'],
+            name='Matches Played',
+            marker_color='#5B6AFE',
+            text=opponent_stats_df['total_matches'],
+            textposition='auto',
+            yaxis='y2',
+            hovertemplate='%{x}<br>Matches: %{y}<extra></extra>'
+        ))
+
+        opponent_comparison_chart.update_layout(
+            title={
+                'text': 'Performance Against Opponents',
+                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            xaxis_title={
+                'text': 'Opponent',
+                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            yaxis=dict(
+                title={
+                    'text': 'Win Rate',
+                    'font': {'color': '#28A745'}
+                },
+                tickformat='.0f',  # Changed from '.0%' to '.0f'
+                range=[0, 110],    # Changed from [0, 1.1] to [0, 110]
+                side='left',
+                tickfont=dict(color='#28A745')
+            ),
+            yaxis2=dict(
+                title={
+                    'text': 'Matches Played',
+                    'font': {'color': '#5B6AFE'}
+                },
+                range=[0, max(opponent_stats_df['total_matches']) * 1.2] if len(opponent_stats_df) > 0 else [0, 10],
+                side='right',
+                overlaying='y',
+                tickfont=dict(color='#5B6AFE')
+            ),
+            barmode='group',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            legend=dict(
+                orientation='h',
+                yanchor='bottom',
+                y=1.02,
+                xanchor='center',
+                x=0.5
+            ),
+            margin=dict(l=60, r=60, t=80, b=60)
         )
+
+        return opponent_comparison_chart
+
+    def create_opponent_win_rate_chart(opponent_stats_df):
+        """Create a win/loss breakdown chart for each opponent."""
+        opponent_win_rate_chart = go.Figure()
+
+        # Create a separate pie chart for each opponent
+        for i, row in opponent_stats_df.iterrows():
+            opponent_win_rate_chart.add_trace(go.Pie(
+                labels=['Wins', 'Draws', 'Losses'],
+                values=[row['wins'], row['draws'], row['losses']],
+                name=row['opponent'],
+                title=row['opponent'],
+                marker_colors=['#28A745', '#5B6AFE', '#DC3545'],
+                visible=(i == 0)  # Only show first opponent by default
+            ))
+
+        # Add dropdown for opponent selection
+        buttons = []
+        for i, row in opponent_stats_df.iterrows():
+            visibility = [j == i for j in range(len(opponent_stats_df))]
+            buttons.append(dict(
+                method='update',
+                label=row['opponent'],
+                args=[{'visible': visibility},
+                    {'title': {'text': f'Win/Loss Breakdown vs {row["opponent"]}',
+                                'font': {'size': 20, 'color': '#6F42C1'}}}]
+            ))
+
+        opponent_win_rate_chart.update_layout(
+            title={
+                'text': f'Win/Loss Breakdown vs {opponent_stats_df.iloc[0]["opponent"] if len(opponent_stats_df) > 0 else ""}',
+                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            updatemenus=[{
+                'buttons': buttons,
+                'direction': 'down',
+                'showactive': True,
+                'x': 0.5,
+                'y': 1.15,
+                'xanchor': 'center',
+                'yanchor': 'top'
+            }] if len(opponent_stats_df) > 0 else [],
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=10, r=10, t=120, b=40)
+        )
+
+        return opponent_win_rate_chart
+
+    def create_opponent_goal_diff_chart(opponent_stats_df):
+        """Create a goal statistics chart by opponent."""
+        # Sort by goal difference
+        opponent_stats_df = opponent_stats_df.sort_values('goal_difference', ascending=False)
+
+        opponent_goal_diff_chart = go.Figure()
+
+        opponent_goal_diff_chart.add_trace(go.Bar(
+            x=opponent_stats_df['opponent'],
+            y=opponent_stats_df['goals_for'],
+            name='Goals Scored',
+            marker_color='#28A745',
+            text=opponent_stats_df['goals_for'],
+            textposition='auto',
+            hovertemplate='%{x}<br>Goals Scored: %{y}<extra></extra>'
+        ))
+
+        opponent_goal_diff_chart.add_trace(go.Bar(
+            x=opponent_stats_df['opponent'],
+            y=opponent_stats_df['goals_against'],
+            name='Goals Conceded',
+            marker_color='#DC3545',
+            text=opponent_stats_df['goals_against'],
+            textposition='auto',
+            hovertemplate='%{x}<br>Goals Conceded: %{y}<extra></extra>'
+        ))
+
+        opponent_goal_diff_chart.update_layout(
+            title={
+                'text': 'Goal Performance by Opponent',
+                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            xaxis_title={
+                'text': 'Opponent',
+                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            yaxis_title={
+                'text': 'Goals',
+                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+            },
+            barmode='group',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            legend=dict(
+                orientation='h',
+                yanchor='bottom',
+                y=1.02,
+                xanchor='center',
+                x=0.5
+            ),
+            margin=dict(l=60, r=30, t=80, b=60)
+        )
+
+        return opponent_goal_diff_chart
 
     # Callback to ensure data loads on initial page load
     @app.callback(
@@ -884,54 +875,10 @@ def init_callbacks(app, teams, team_groups, conn):
             filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
 
             if team == 'Key West (Combined)':
-                team_filter = "(LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%')"
-                opponent_query = f"""
-                SELECT
-                    CASE
-                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_team
-                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_team
-                    END AS opponent,
-                    CASE
-                        WHEN (LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%') AND home_score > away_score THEN 'Win'
-                        WHEN (LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%') AND away_score > home_score THEN 'Win'
-                        WHEN home_score = away_score THEN 'Draw'
-                        ELSE 'Loss'
-                    END AS result,
-                    CASE
-                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN home_score
-                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN away_score
-                    END AS team_score,
-                    CASE
-                        WHEN LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%key-west%' OR LOWER(home_team) LIKE '%keywest%' OR LOWER(home_team) LIKE '%kw%' OR LOWER(home_team) = 'kwfc' OR LOWER(home_team) LIKE '%key west%' OR LOWER(home_team) LIKE '%keystone%' THEN away_score
-                        WHEN LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%key-west%' OR LOWER(away_team) LIKE '%keywest%' OR LOWER(away_team) LIKE '%kw%' OR LOWER(away_team) = 'kwfc' OR LOWER(away_team) LIKE '%key west%' OR LOWER(away_team) LIKE '%keystone%' THEN home_score
-                    END AS opponent_score
-                FROM soccer_data
-                WHERE ({filter_conditions}) AND {team_filter}
-                """
+                team_filter = get_key_west_team_filter()
+                opponent_query = get_opponent_query_for_key_west(filter_conditions, team_filter)
             else:
-                opponent_query = f"""
-                SELECT
-                    CASE
-                        WHEN home_team = '{team}' THEN away_team
-                        WHEN away_team = '{team}' THEN home_team
-                    END AS opponent,
-                    CASE
-                        WHEN home_team = '{team}' AND home_score > away_score THEN 'Win'
-                        WHEN away_team = '{team}' AND away_score > home_score THEN 'Win'
-                        WHEN home_score = away_score THEN 'Draw'
-                        ELSE 'Loss'
-                    END AS result,
-                    CASE
-                        WHEN home_team = '{team}' THEN home_score
-                        WHEN away_team = '{team}' THEN away_score
-                    END AS team_score,
-                    CASE
-                        WHEN home_team = '{team}' THEN away_score
-                        WHEN away_team = '{team}' THEN home_score
-                    END AS opponent_score
-                FROM soccer_data
-                WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
-                """
+                opponent_query = get_opponent_query_for_team(team, filter_conditions)
 
             # Execute query and get opponent data
             opponent_df = conn.execute(opponent_query).fetchdf()
