@@ -57,8 +57,8 @@ service nginx start \n\
 \n\
 # Start Dash app \n\
 echo "Starting Dash application..." \n\
-cd /app \n\
-gunicorn --workers 2 --bind 0.0.0.0:8050 ui-analytics.app:server \n\
+cd /app/ui-analytics \n\
+gunicorn --workers 2 --bind 0.0.0.0:8050 app:server \n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose ports
