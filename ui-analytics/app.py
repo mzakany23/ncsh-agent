@@ -55,7 +55,7 @@ app = dash.Dash(
     ],
     update_title='Loading...',
     suppress_callback_exceptions=True,
-    title='NC Soccer Analytics Dashboard'
+    title='NC Soccer Game Dashboard'
 )
 server = app.server
 

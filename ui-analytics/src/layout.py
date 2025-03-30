@@ -35,21 +35,38 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
             style={"display": "block"}  # Initially visible
         ),
 
-        # Top Header Row
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("Game Dashboard", className="text-center my-3")
-                ], className="p-3", style={'background-color': 'white', 'border-radius': '8px', 'box-shadow': '0 2px 4px rgba(0,0,0,0.05)'})
-            ], width=12)
-        ], className="mb-4"),
+        # Top Navigation Bar (Superset style)
+        html.Div([
+            dbc.Row([
+                # Left side - Title, Star, Published tag and version
+                dbc.Col([
+                    html.Div([
+                        html.H3("NC Soccer Analytics Dashboard", className="mb-0 d-inline-block"),
+                        html.I(className="fas fa-star text-warning ms-2", style={"font-size": "22px"}),
+                        html.Span("Published", className="ms-2 px-2 py-1",
+                                 style={"background-color": "#F5F5F5",
+                                       "color": "#484848",
+                                       "border-radius": "4px",
+                                       "font-size": "13px",
+                                       "font-weight": "500"}),
+                        html.Span("v1.2.0", className="ms-2",
+                                 style={"color": "#666666",
+                                       "font-size": "13px",
+                                       "font-weight": "500"}),
+                        html.Span("Last updated: Mar 30, 2025", className="ms-2",
+                                 style={"color": "#666666",
+                                       "font-size": "13px"})
+                    ], className="d-flex align-items-center")
+                ], width=12)
+            ], className="align-items-center"),
+        ], className="py-3 px-4 mb-4", style={'background-color': 'white', 'border-bottom': '1px solid #E0E0E0'}),
 
         # Main content in two columns
         dbc.Row([
             # Left sidebar with filters
             dbc.Col([
                 html.Div([
-                    html.H4("Filters", className="mb-4", style={'color': '#5B6AFE'}),
+                    html.H4("Filters", className="mb-4", style={'color': '#20A7C9'}),
 
                     html.Label("Team Selection Type:", className="fw-bold mb-2"),
                     dcc.RadioItems(
@@ -268,21 +285,6 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
 
             # Right main content area
             dbc.Col([
-                # Introduction and context
-                dbc.Card([
-                    dbc.CardHeader(html.H4("About This Dashboard", className="m-0")),
-                    dbc.CardBody([
-                        html.P([
-                            "This dashboard provides an analysis of soccer match data for the selected team and time period. ",
-                            "Use the filters to select a specific team and date range to explore their performance."
-                        ]),
-                        html.P([
-                            "The Key West (Combined) option shows aggregate statistics for all Key West teams, while individual team ",
-                            "selections allow you to focus on specific squads."
-                        ])
-                    ])
-                ], className="mb-4"),
-
                 # Summary statistics cards in a single row at the top of the story
                 html.H4("Performance Summary", className="section-header"),
                 dcc.Loading(
