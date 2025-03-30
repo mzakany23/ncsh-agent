@@ -1,4 +1,4 @@
-version: '3'
+version: '3.8'
 services:
   analytics:
     image: soccer-analytics-dashboard
@@ -12,6 +12,7 @@ services:
     volumes:
       # Mount the entire analysis directory for access to data
       - ../analysis:/app/analysis
+      - ./data:/app/ui-analytics/data  # Persistent volume for SQLite database
     environment:
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-ncsoccer}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-password}
@@ -20,6 +21,6 @@ services:
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8050/"]
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 3
       start_period: 5s
