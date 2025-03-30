@@ -20,7 +20,12 @@ from src.util import (
 )
 
 
-def init_callbacks(app, teams, team_groups, conn):
+def init_callbacks(app, teams, team_groups_param, conn):
+    # Make team_groups properly accessible as a global variable within all callbacks
+    global team_groups
+    # Store the initial team_groups from the parameter to the global variable
+    team_groups = team_groups_param
+
     @app.callback(
         [
             Output('games-played', 'children'),
@@ -1084,6 +1089,9 @@ def init_callbacks(app, teams, team_groups, conn):
     def manage_team_groups(create_clicks, update_clicks, delete_clicks,
                         new_name, new_teams, edit_name, edit_teams, current_selection):
         """Handle team group management operations."""
+        # Declare team_groups as global to access the module-level variable
+        global team_groups
+
         ctx = callback_context
         triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
@@ -1091,6 +1099,7 @@ def init_callbacks(app, teams, team_groups, conn):
         print(f"Current state - Create clicks: {create_clicks}, Update clicks: {update_clicks}, Delete clicks: {delete_clicks}")
         print(f"Edit name: {edit_name}, Edit teams count: {len(edit_teams) if edit_teams else 0}")
         print(f"Current group selection: {current_selection}")
+        print(f"BEFORE OPERATION: Global team_groups contains {len(team_groups)} groups: {list(team_groups.keys())}")
 
         # Default return values
         status = ""
@@ -1098,8 +1107,8 @@ def init_callbacks(app, teams, team_groups, conn):
         new_teams_value = []
         selected_group = current_selection  # Keep current selection by default
 
-        # Declare global to ensure we update the actual shared variable
-        global team_groups
+        # We're using the global team_groups variable declared at the init_callbacks level
+        # so we don't need to redeclare it here
 
         if triggered_id == 'create-group-button' and new_name and new_teams:
             # Create a new team group
@@ -1107,18 +1116,19 @@ def init_callbacks(app, teams, team_groups, conn):
                 status = f"Team group '{new_name}' created successfully!"
                 # Refresh team groups after successful creation
                 team_groups = get_team_groups()
+                print(f"AFTER CREATE: Global team_groups refreshed, now contains {len(team_groups)} groups: {list(team_groups.keys())}")
                 selected_group = new_name  # Auto-select newly created group
             else:
                 status = f"Failed to create team group '{new_name}'. It may already exist."
                 new_name_value = new_name
                 new_teams_value = new_teams
-
         elif triggered_id == 'update-group-button' and edit_name and edit_teams:
             # Update an existing team group
             if update_team_group(edit_name, edit_teams):
                 status = f"Team group '{edit_name}' updated successfully!"
                 # Refresh team groups after successful update
                 team_groups = get_team_groups()
+                print(f"AFTER UPDATE: Global team_groups refreshed, now contains {len(team_groups)} groups: {list(team_groups.keys())}")
                 # If current selection is the updated group, keep it selected
                 if current_selection == edit_name:
                     selected_group = edit_name
@@ -1142,7 +1152,7 @@ def init_callbacks(app, teams, team_groups, conn):
 
                     # Refresh team groups after deletion
                     team_groups = get_team_groups()
-                    print(f"After deletion, available groups: {list(team_groups.keys())}")
+                    print(f"AFTER DELETE: Global team_groups refreshed, now contains {len(team_groups)} groups: {list(team_groups.keys())}")
 
                     # Clear the current selection if it was the deleted group
                     if current_selection == edit_name:
@@ -1158,12 +1168,27 @@ def init_callbacks(app, teams, team_groups, conn):
 
         # Update dropdown options for team group dropdown
         print(f"Updating team group dropdown with team groups: {list(team_groups.keys())}")
-        team_group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+
+        # Instead of relying only on the global variable, also query the database directly
+        # to ensure complete consistency across all dropdowns
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT name FROM team_groups ORDER BY name")
+            db_group_names = [row[0] for row in cursor.fetchall()]
+            print(f"Direct database query shows {len(db_group_names)} groups: {db_group_names}")
+            team_group_options = [{'label': group_name, 'value': group_name} for group_name in db_group_names]
+        except sqlite3.Error as e:
+            print(f"Error querying team groups for dropdown: {str(e)}")
+            # Fall back to using the global variable if database query fails
+            team_group_options = [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+        finally:
+            conn.close()
 
         # Make sure the selected group still exists
-        if selected_group and selected_group not in team_groups:
-            if team_groups:
-                selected_group = next(iter(team_groups.keys()))
+        if selected_group and selected_group not in db_group_names:
+            if db_group_names:
+                selected_group = db_group_names[0]
                 print(f"Selected group not found, defaulting to: {selected_group}")
             else:
                 selected_group = None
