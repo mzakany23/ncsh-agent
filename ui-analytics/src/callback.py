@@ -881,8 +881,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
             start_date = date(today.year - 1, 1, 1).strftime('%Y-%m-%d')
             end_date = date(today.year - 1, 12, 31).strftime('%Y-%m-%d')
         elif preset == 'all_time':
-            start_date = min_date
-            end_date = max_date
+            # Use a very early date and future date to cover all possible data
+            start_date = '2000-01-01'
+            end_date = '2030-12-31'
         elif preset.startswith('year_'):
             year = int(preset.split('_')[1])
             start_date = date(year, 1, 1).strftime('%Y-%m-%d')
