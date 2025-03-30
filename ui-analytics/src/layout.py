@@ -93,6 +93,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                         options=[
                             {'label': 'All Opponents', 'value': 'all'},
                             {'label': 'Specific Opponent(s)', 'value': 'specific'},
+                            {'label': 'Team Group(s)', 'value': 'team_groups'},
                             {'label': 'Worthy Adversaries', 'value': 'worthy'}
                         ],
                         value='all',
@@ -101,7 +102,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
 
                     html.Div(
                         [
-                            html.Label("Select Opponent(s):", className="fw-bold mb-2"),
+                            html.Label("Select Opponent(s):", className="fw-bold mb-2", id="opponent-selection-label"),
                             dcc.Dropdown(
                                 id='opponent-selection',
                                 options=[], # Will be updated dynamically
@@ -111,6 +112,19 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                 className="mb-2",
                                 placeholder="Select one or more opponents"
                             ),
+                            # New dropdown specifically for team groups
+                            html.Div([
+                                html.Label("Select Team Group(s):", className="fw-bold mb-2"),
+                                dcc.Dropdown(
+                                    id='opponent-team-groups',
+                                    options=[{'label': group_name, 'value': group_name} for group_name in team_groups.keys()],
+                                    value=[],
+                                    multi=True,
+                                    searchable=True,
+                                    className="mb-2",
+                                    placeholder="Select one or more team groups"
+                                ),
+                            ], id="team-groups-opponent-div", style={'display': 'none'}),
                             html.Div(
                                 [
                                     html.Label("Competitiveness Threshold:", className="fw-bold mb-2"),

@@ -56,10 +56,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
             Input('initial-load', 'children'),
             Input('opponent-filter-type', 'value'),
             Input('opponent-selection', 'value'),
+            Input('opponent-team-groups', 'value'),
             Input('competitiveness-threshold', 'value')
         ]
     )
-    def update_dashboard(team, team_group, selection_type, start_date, end_date, initial_load, opponent_filter_type, opponent_selection, competitiveness_threshold):
+    def update_dashboard(team, team_group, selection_type, start_date, end_date, initial_load,
+                         opponent_filter_type, opponent_selection, opponent_team_groups, competitiveness_threshold):
         # Set default values for inputs
         start_date = start_date or (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
         end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -76,6 +78,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
         filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
         print(f"Debug: Date range selected: {start_date} to {end_date}")
         print(f"Debug: Selection type: {selection_type}, Team: {team}, Team Group: {team_group}")
+        print(f"Debug: Opponent filter: {opponent_filter_type}, Opponents: {opponent_selection}, Opponent Groups: {opponent_team_groups}")
 
         # Run debug queries to check data
         run_debug_queries(conn, filter_conditions)
@@ -91,6 +94,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             matches_df,
             opponent_filter_type,
             opponent_selection,
+            opponent_team_groups,
             competitiveness_threshold
         )
 
@@ -105,6 +109,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             filtered_matches_df,
             opponent_filter_type,
             opponent_selection,
+            opponent_team_groups,
             competitiveness_threshold
         )
 
@@ -193,14 +198,15 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         return conn.execute(matches_query).fetchdf()
 
-    def filter_matches_by_filter_type(matches_df, filter_type, opponent_selection, competitiveness_threshold):
+    def filter_matches_by_filter_type(matches_df, filter_type, opponent_selection, opponent_team_groups, competitiveness_threshold):
         """
         Filter matches based on the selected filter type.
 
         Args:
             matches_df: DataFrame containing match data
-            filter_type: Type of filter to apply ('specific', 'worthy', or 'all')
+            filter_type: Type of filter to apply ('specific', 'worthy', 'team_groups' or 'all')
             opponent_selection: List of selected opponent teams
+            opponent_team_groups: List of selected opponent team groups
             competitiveness_threshold: Threshold for worthy opponents
 
         Returns:
@@ -215,6 +221,29 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
                 filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
                 print(f"Debug: Selected specific opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
+
+        elif filter_type == 'team_groups' and opponent_team_groups and len(opponent_team_groups) > 0:
+            # Filter to include only matches against opponents in selected team groups
+            if not filtered_matches_df.empty:
+                # Get all teams from the selected team groups
+                all_opponent_teams = []
+                for group_name in opponent_team_groups:
+                    if group_name in team_groups:
+                        group_teams = team_groups.get(group_name, [])
+                        all_opponent_teams.extend(group_teams)
+
+                # Remove duplicates
+                all_opponent_teams = list(set(all_opponent_teams))
+
+                if all_opponent_teams:
+                    filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
+                    filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, all_opponent_teams)
+                    print(f"Debug: Filtering by {len(all_opponent_teams)} teams from {len(opponent_team_groups)} team groups")
+                    print(f"Debug: Found {len(filtered_matches_df)} matches against teams in selected groups")
+                else:
+                    # If no teams in the selected groups, return empty DataFrame
+                    filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
+                    print(f"Debug: No teams found in the selected team groups")
 
         elif filter_type == 'worthy':
             if opponent_selection and len(opponent_selection) > 0:
@@ -562,7 +591,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         return pie_fig
 
-    def generate_opponent_analysis(filtered_matches_df, opponent_filter_type, opponent_selection, competitiveness_threshold):
+    def generate_opponent_analysis(filtered_matches_df, opponent_filter_type, opponent_selection, opponent_team_groups, competitiveness_threshold):
         """
         Generate opponent analysis visualizations and text.
 
@@ -570,6 +599,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             filtered_matches_df: DataFrame containing filtered match data
             opponent_filter_type: Type of opponent filter applied
             opponent_selection: List of selected opponents
+            opponent_team_groups: List of selected opponent team groups
             competitiveness_threshold: Threshold for worthy opponents
 
         Returns:
@@ -589,6 +619,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
             opponent_analysis_text = f"Analysis of worthy adversaries (competitiveness ≥ {competitiveness_threshold}%)"
         elif opponent_filter_type == 'specific' and opponent_selection:
             opponent_analysis_text = f"Analysis of selected opponent(s): {', '.join(opponent_selection)}"
+        elif opponent_filter_type == 'team_groups' and opponent_team_groups:
+            group_names = ", ".join(opponent_team_groups)
+            opponent_analysis_text = f"Analysis of opponents in team group(s): {group_names}"
         else:
             opponent_analysis_text = "No opponent filter selected"
 
@@ -879,17 +912,22 @@ def init_callbacks(app, teams, team_groups_param, conn):
     @app.callback(
         [
             Output('opponent-selection-div', 'style'),
-            Output('worthy-adversaries-controls', 'style')
+            Output('worthy-adversaries-controls', 'style'),
+            Output('team-groups-opponent-div', 'style'),
+            Output('opponent-selection-label', 'children'),
+            Output('opponent-selection', 'style')
         ],
         [Input('opponent-filter-type', 'value')]
     )
     def toggle_opponent_controls(filter_type):
         if filter_type == 'specific':
-            return {'display': 'block'}, {'display': 'none'}
+            return {'display': 'block'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
         elif filter_type == 'worthy':
-            return {'display': 'block'}, {'display': 'block'}
+            return {'display': 'block'}, {'display': 'block'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
+        elif filter_type == 'team_groups':
+            return {'display': 'block'}, {'display': 'none'}, {'display': 'block'}, "Select Opponent(s):", {'display': 'none'}
         else:  # 'all' or any other value
-            return {'display': 'none'}, {'display': 'none'}
+            return {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
 
     # Callback to update opponent dropdown options based on filter type
     @app.callback(
@@ -1254,3 +1292,26 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         print(f"Final selected group: {selected_group}")
         return status, new_name_value, new_teams_value, team_group_options, selected_group
+
+    # Callback to update team group options for the opponent filter
+    @app.callback(
+        Output('opponent-team-groups', 'options'),
+        [Input('group-management-status', 'children')]  # Trigger when team groups change
+    )
+    def update_opponent_team_groups(status_change):
+        """Update the team groups dropdown in the opponent filter section"""
+        # Query the database directly for the most up-to-date list
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("SELECT name FROM team_groups ORDER BY name")
+            group_names = [row[0] for row in cursor.fetchall()]
+            print(f"Updating opponent team groups dropdown with {len(group_names)} groups")
+            return [{'label': name, 'value': name} for name in group_names]
+        except sqlite3.Error as e:
+            print(f"Error querying team groups for opponent dropdown: {str(e)}")
+            # Fall back to the global variable
+            return [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+        finally:
+            conn.close()
