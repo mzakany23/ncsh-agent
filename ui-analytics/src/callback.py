@@ -10,8 +10,11 @@ from src.queries import (
     get_debug_key_west_query,
     get_combined_matches_query,
     get_team_matches_query,
+    get_team_group_filter,
+    get_team_group_matches_query,
     get_opponent_query_for_key_west,
-    get_opponent_query_for_team
+    get_opponent_query_for_team,
+    get_opponent_query_for_team_group
 )
 from src.util import (
     normalize_team_names_in_dataframe,
@@ -46,6 +49,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
         ],
         [
             Input('team-dropdown', 'value'),
+            Input('team-group-dropdown', 'value'),
+            Input('team-selection-type', 'value'),
             Input('date-range', 'start_date'),
             Input('date-range', 'end_date'),
             Input('initial-load', 'children'),
@@ -54,21 +59,32 @@ def init_callbacks(app, teams, team_groups_param, conn):
             Input('competitiveness-threshold', 'value')
         ]
     )
-    def update_dashboard(team, start_date, end_date, initial_load, opponent_filter_type, opponent_selection, competitiveness_threshold):
+    def update_dashboard(team, team_group, selection_type, start_date, end_date, initial_load, opponent_filter_type, opponent_selection, competitiveness_threshold):
         # Set default values for inputs
         start_date = start_date or (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
         end_date = end_date or datetime.now().strftime('%Y-%m-%d')
-        team = team or 'Key West (Combined)'
+
+        # Handle different selection types
+        if selection_type == 'individual':
+            team = team or 'Key West (Combined)'
+            display_name = team
+        else:  # 'group'
+            team_group = team_group or (next(iter(team_groups.keys())) if team_groups else None)
+            display_name = f"Group: {team_group}" if team_group else "No group selected"
 
         # Create date filter condition for SQL queries
         filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
         print(f"Debug: Date range selected: {start_date} to {end_date}")
+        print(f"Debug: Selection type: {selection_type}, Team: {team}, Team Group: {team_group}")
 
         # Run debug queries to check data
         run_debug_queries(conn, filter_conditions)
 
-        # Get match data for the selected team
-        matches_df = get_team_match_data(conn, team, filter_conditions)
+        # Get match data based on selection type
+        if selection_type == 'individual':
+            matches_df = get_team_match_data(conn, team, filter_conditions)
+        else:  # 'group'
+            matches_df = get_team_group_match_data(conn, team_group, filter_conditions)
 
         # Apply opponent filtering
         filtered_matches_df, display_opponent_analysis = filter_matches_by_filter_type(
@@ -81,8 +97,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
         # Calculate dashboard metrics
         dashboard_metrics = calculate_dashboard_metrics(filtered_matches_df)
 
-        # Generate visualizations
-        visualizations = generate_visualizations(filtered_matches_df, team, dashboard_metrics)
+        # Generate visualizations - use display_name for proper titles
+        visualizations = generate_visualizations(filtered_matches_df, display_name, dashboard_metrics)
 
         # Generate opponent analysis
         opponent_analysis = generate_opponent_analysis(
@@ -152,6 +168,28 @@ def init_callbacks(app, teams, team_groups_param, conn):
             matches_query = get_combined_matches_query(team, filter_conditions)
         else:
             matches_query = get_team_matches_query(team, filter_conditions)
+
+        return conn.execute(matches_query).fetchdf()
+
+    def get_team_group_match_data(conn, group_name, filter_conditions):
+        """Get match data for the selected team group."""
+        if not group_name or group_name not in team_groups:
+            print(f"Debug: Team group '{group_name}' not found or empty")
+            return pd.DataFrame()  # Return an empty DataFrame
+
+        # Get the teams in the group
+        teams = team_groups.get(group_name, [])
+        if not teams:
+            print(f"Debug: Team group '{group_name}' has no teams")
+            return pd.DataFrame()  # Return an empty DataFrame
+
+        print(f"Debug: Getting matches for team group '{group_name}' with {len(teams)} teams: {teams}")
+
+        # Generate and execute the query
+        matches_query = get_team_group_matches_query(teams, filter_conditions)
+
+        # Debug - log the query
+        print(f"Debug: Team group query first 200 chars: {matches_query[:200]}...")
 
         return conn.execute(matches_query).fetchdf()
 
@@ -860,14 +898,24 @@ def init_callbacks(app, teams, team_groups_param, conn):
         [
             Input('opponent-filter-type', 'value'),
             Input('team-dropdown', 'value'),
+            Input('team-group-dropdown', 'value'),
+            Input('team-selection-type', 'value'),
             Input('date-range', 'start_date'),
             Input('date-range', 'end_date'),
             Input('competitiveness-threshold', 'value')
         ]
     )
-    def update_opponent_options(filter_type, team, start_date, end_date, competitiveness_threshold):
-        # Default opponents (all teams except selected team)
-        all_opponents = [{'label': t, 'value': t} for t in teams if t != team and t != 'Key West (Combined)']
+    def update_opponent_options(filter_type, team, team_group, selection_type, start_date, end_date, competitiveness_threshold):
+        # Default opponents (all teams except selected team/group)
+        if selection_type == 'individual':
+            all_opponents = [{'label': t, 'value': t} for t in teams if t != team and t != 'Key West (Combined)']
+        else:  # 'group'
+            if not team_group or team_group not in team_groups:
+                return [], []  # No group selected or invalid group
+
+            group_teams = team_groups.get(team_group, [])
+            all_opponents = [{'label': t, 'value': t} for t in teams
+                           if t != 'Key West (Combined)' and t not in group_teams]
 
         # If filter type is 'worthy', compute worthy opponents
         if filter_type == 'worthy':
@@ -876,14 +924,24 @@ def init_callbacks(app, teams, team_groups_param, conn):
             if not end_date:
                 end_date = datetime.now().strftime('%Y-%m-%d')
 
-            # Get data for the selected team
+            # Get data for the selected team or team group
             filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
 
-            if team == 'Key West (Combined)':
-                team_filter = get_key_west_team_filter()
-                opponent_query = get_opponent_query_for_key_west(filter_conditions, team_filter)
-            else:
-                opponent_query = get_opponent_query_for_team(team, filter_conditions)
+            if selection_type == 'individual':
+                if team == 'Key West (Combined)':
+                    team_filter = get_key_west_team_filter()
+                    opponent_query = get_opponent_query_for_key_west(filter_conditions, team_filter)
+                else:
+                    opponent_query = get_opponent_query_for_team(team, filter_conditions)
+            else:  # 'group'
+                if not team_group or team_group not in team_groups:
+                    return [], []  # No valid group selected
+
+                group_teams = team_groups.get(team_group, [])
+                if not group_teams:
+                    return [], []  # Empty group
+
+                opponent_query = get_opponent_query_for_team_group(group_teams, filter_conditions)
 
             # Execute query and get opponent data
             opponent_df = conn.execute(opponent_query).fetchdf()

@@ -4,6 +4,28 @@ This module contains functions to generate SQL queries for retrieving
 match data and team information from the soccer database.
 """
 
+def get_team_group_filter(teams):
+    """
+    Returns SQL filter condition for a team group.
+
+    Args:
+        teams: List of team names in the group
+
+    Returns:
+        SQL condition that matches if any home_team or away_team is in the group
+    """
+    if not teams:
+        return "(1=0)"  # Return a condition that always evaluates to false
+
+    conditions = []
+    for team in teams:
+        # Escape single quotes in team names
+        escaped_team = team.replace("'", "''")
+        conditions.append(f"home_team = '{escaped_team}'")
+        conditions.append(f"away_team = '{escaped_team}'")
+
+    return f"({' OR '.join(conditions)})"
+
 def get_key_west_team_filter():
     """
     Returns SQL filter condition for identifying Key West team variations.
@@ -232,4 +254,115 @@ def get_opponent_query_for_team(team, filter_conditions):
         END AS opponent_score
     FROM soccer_data
     WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
+    """
+
+def get_team_group_matches_query(teams, filter_conditions):
+    """
+    Generate a SQL query for retrieving matches for a team group.
+
+    Args:
+        teams: List of team names in the group
+        filter_conditions: Additional SQL filter conditions (date range, etc.)
+
+    Returns:
+        SQL query string for retrieving team group matches
+    """
+    if not teams:
+        # Return a query that gives an empty result
+        return "SELECT * FROM soccer_data WHERE 1=0"
+
+    # Create a SQL filter for the team group
+    team_filter = get_team_group_filter(teams)
+
+    # Build condition strings without using backslashes in f-strings
+    home_conditions = []
+    away_conditions = []
+    for team in teams:
+        # Double the single quotes for SQL escaping
+        escaped_team = team.replace("'", "''")
+        home_conditions.append(f"home_team = '{escaped_team}'")
+        away_conditions.append(f"away_team = '{escaped_team}'")
+
+    home_condition_str = " OR ".join(home_conditions)
+    away_condition_str = " OR ".join(away_conditions)
+
+    return f"""
+    SELECT date, home_team, away_team, home_score, away_score,
+        CASE
+            WHEN ({home_condition_str}) THEN home_score
+            WHEN ({away_condition_str}) THEN away_score
+            ELSE 0
+        END AS team_score,
+        CASE
+            WHEN ({home_condition_str}) THEN away_score
+            WHEN ({away_condition_str}) THEN home_score
+            ELSE 0
+        END AS opponent_score,
+        CASE
+            WHEN ({home_condition_str}) THEN away_team
+            WHEN ({away_condition_str}) THEN home_team
+            ELSE ''
+        END AS opponent_team,
+        CASE
+            WHEN ({home_condition_str}) AND home_score > away_score THEN 'Win'
+            WHEN ({away_condition_str}) AND away_score > home_score THEN 'Win'
+            WHEN home_score = away_score THEN 'Draw'
+            ELSE 'Loss'
+        END AS result
+    FROM soccer_data
+    WHERE ({filter_conditions}) AND {team_filter}
+    ORDER BY date DESC
+    """
+
+def get_opponent_query_for_team_group(teams, filter_conditions):
+    """
+    Generate a SQL query for retrieving opponent information for a team group.
+
+    Args:
+        teams: List of team names in the group
+        filter_conditions: SQL filter conditions (date range, etc.)
+
+    Returns:
+        SQL query string for retrieving opponent data for the team group
+    """
+    if not teams:
+        return "SELECT * FROM soccer_data WHERE 1=0"  # Empty query
+
+    # Create condition for identifying team matches
+    team_filter = get_team_group_filter(teams)
+
+    # Build condition strings without using backslashes in f-strings
+    home_conditions = []
+    away_conditions = []
+    for team in teams:
+        # Double the single quotes for SQL escaping
+        escaped_team = team.replace("'", "''")
+        home_conditions.append(f"home_team = '{escaped_team}'")
+        away_conditions.append(f"away_team = '{escaped_team}'")
+
+    home_condition_str = " OR ".join(home_conditions)
+    away_condition_str = " OR ".join(away_conditions)
+
+    return f"""
+    SELECT
+        CASE
+            WHEN ({home_condition_str}) THEN away_team
+            WHEN ({away_condition_str}) THEN home_team
+        END AS opponent,
+        CASE
+            WHEN ({home_condition_str}) AND home_score > away_score THEN 'Win'
+            WHEN ({away_condition_str}) AND away_score > home_score THEN 'Win'
+            WHEN home_score = away_score THEN 'Draw'
+            ELSE 'Loss'
+        END AS result,
+        CASE
+            WHEN ({home_condition_str}) THEN home_score
+            WHEN ({away_condition_str}) THEN away_score
+        END AS team_score,
+        CASE
+            WHEN ({home_condition_str}) THEN away_score
+            WHEN ({away_condition_str}) THEN home_score
+        END AS opponent_score
+    FROM soccer_data
+    WHERE ({filter_conditions}) AND {team_filter}
     """
