@@ -932,7 +932,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
             'margin-bottom': '10px',
             'position': 'relative',
             'zIndex': 1000,
-            'display': 'block'
+            'display': 'block',
+            'width': '100%'
         }
 
         if filter_type == 'specific':

@@ -114,7 +114,8 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                 style={
                                     'min-height': '38px',
                                     'height': 'auto',
-                                    'margin-bottom': '10px'
+                                    'margin-bottom': '10px',
+                                    'width': '100%'
                                 }
                             ),
                             # New dropdown specifically for team groups

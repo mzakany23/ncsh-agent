@@ -151,7 +151,8 @@ def init_style():
         border-radius: 4px !important;
         border: 1px solid var(--border-color) !important;
         font-size: 14px !important;
-        height: 36px !important;
+        height: auto !important;
+        min-height: 36px !important;
     }
 
     .Select-control:hover {
@@ -168,6 +169,19 @@ def init_style():
         border: 1px solid var(--border-color) !important;
         box-shadow: 0 2px 4px var(--shadow-color) !important;
         font-size: 14px !important;
+        max-width: none !important;
+        width: auto !important;
+        min-width: 100% !important;
+    }
+
+    .Select-menu {
+        max-height: 300px !important;
+    }
+
+    .Select-option {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        padding: 8px 10px !important;
     }
 
     /* Multi-select dropdown styling */
@@ -178,6 +192,13 @@ def init_style():
         border-radius: 2px !important;
         margin-top: 3px !important;
         margin-bottom: 3px !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: normal !important;
+        height: auto !important;
+        line-height: 1.4 !important;
+        padding: 2px 5px !important;
     }
 
     .Select--multi .Select-value-icon {
@@ -193,6 +214,7 @@ def init_style():
         display: flex !important;
         flex-wrap: wrap !important;
         padding: 2px !important;
+        max-width: 100% !important;
     }
 
     /* Date picker styling */
@@ -379,6 +401,11 @@ def init_style():
         100% {
             transform: rotate(360deg);
         }
+    }
+
+    /* Fix for dropdown height to show full text */
+    .Select.has-value.Select--multi .Select-input {
+        margin-top: 3px !important;
     }
     '''
     return custom_css
