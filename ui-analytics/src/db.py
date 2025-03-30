@@ -55,8 +55,8 @@ def init_db():
 
 def init_team_db():
     """Initialize the SQLite database for team groups."""
-    # Get the directory path
-    dir_path = os.path.join(os.path.dirname(__file__), 'data')
+    # Get the directory path - store at the project root data directory for persistence
+    dir_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
 
     # Create the directory if it doesn't exist
     os.makedirs(dir_path, exist_ok=True)
@@ -99,14 +99,16 @@ def init_team_db():
 
 def get_db_connection():
     """Get a SQLite database connection."""
-    # Get the directory path
-    dir_path = os.path.join(os.path.dirname(__file__), 'data')
+    # Get the directory path - must match the path used in init_team_db
+    dir_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
 
     # Create the directory if it doesn't exist
     os.makedirs(dir_path, exist_ok=True)
 
     # Set the database path
     db_path = os.path.join(dir_path, 'team_groups.db')
+
+    print(f"Connecting to database at {db_path}")
 
     # Connect to the database and enable foreign keys
     conn = sqlite3.connect(db_path)

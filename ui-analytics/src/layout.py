@@ -51,15 +51,6 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 html.Div([
                     html.H4("Filters", className="mb-4", style={'color': '#5B6AFE'}),
 
-                    html.Label("Team:", className="fw-bold mb-2"),
-                    dcc.Dropdown(
-                        id='team-dropdown',
-                        options=[{'label': team, 'value': team} for team in teams],
-                        value='Key West (Combined)',  # Default to Key West (Combined)
-                        searchable=True,
-                        className="mb-4"
-                    ),
-
                     html.Label("Team Selection Type:", className="fw-bold mb-2"),
                     dcc.RadioItems(
                         id='team-selection-type',
@@ -69,6 +60,15 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                         ],
                         value='individual',
                         className="mb-2"
+                    ),
+
+                    html.Label("Team:", className="fw-bold mb-2"),
+                    dcc.Dropdown(
+                        id='team-dropdown',
+                        options=[{'label': team, 'value': team} for team in teams],
+                        value='Key West (Combined)',  # Default to Key West (Combined)
+                        searchable=True,
+                        className="mb-4"
                     ),
 
                     html.Div(
