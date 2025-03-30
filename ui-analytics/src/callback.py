@@ -907,14 +907,21 @@ def init_callbacks(app, teams, team_groups_param, conn):
         [Input('opponent-filter-type', 'value')]
     )
     def toggle_opponent_controls(filter_type):
+        # Default dropdown style that allows proper multi-selection display
+        multi_select_style = {
+            'display': 'block',
+            'min-height': '38px',
+            'height': 'auto'
+        }
+
         if filter_type == 'specific':
-            return {'display': 'block'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
+            return {'display': 'block'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", multi_select_style
         elif filter_type == 'worthy':
-            return {'display': 'block'}, {'display': 'block'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
+            return {'display': 'block'}, {'display': 'block'}, {'display': 'none'}, "Worthy Adversaries:", multi_select_style
         elif filter_type == 'team_groups':
             return {'display': 'block'}, {'display': 'none'}, {'display': 'block'}, "Select Opponent(s):", {'display': 'none'}
         else:  # 'all' or any other value
-            return {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", {'display': 'block'}
+            return {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, "Select Opponent(s):", multi_select_style
 
     # Callback to update opponent dropdown options based on filter type
     @app.callback(
@@ -1051,8 +1058,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
             worthy_opponents = sorted(worthy_opponents, key=lambda x: x['competitiveness'], reverse=True)
 
             if worthy_opponents:
-                # Return all worthy opponents' options and values
-                print(f"Debug: Found {len(worthy_opponents)} worthy opponents")
+                # Return all worthy opponents' options and all values already selected
+                # Ensure worthy_opponent_values is a proper list for multi-select
+                if not isinstance(worthy_opponent_values, list):
+                    worthy_opponent_values = [worthy_opponent_values] if worthy_opponent_values else []
+
+                print(f"Debug: Found {len(worthy_opponents)} worthy opponents, returning {len(worthy_opponent_values)} values: {worthy_opponent_values}")
                 return worthy_opponents, worthy_opponent_values
             else:
                 return [{'label': 'No worthy opponents found with current threshold', 'value': ''}], []

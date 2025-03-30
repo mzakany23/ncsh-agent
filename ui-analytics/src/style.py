@@ -160,6 +160,31 @@ def init_style():
         box-shadow: 0 2px 4px var(--shadow-color) !important;
     }
 
+    /* Multi-select dropdown styling */
+    .Select--multi .Select-value {
+        background-color: var(--primary-light) !important;
+        border-color: var(--primary) !important;
+        color: white !important;
+        border-radius: 4px !important;
+        margin-top: 3px !important;
+        margin-bottom: 3px !important;
+    }
+
+    .Select--multi .Select-value-icon {
+        border-right-color: var(--primary) !important;
+    }
+
+    .Select--multi .Select-value-icon:hover {
+        background-color: var(--primary) !important;
+        color: white !important;
+    }
+
+    .Select-multi-value-wrapper {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        padding: 2px !important;
+    }
+
     /* Date picker styling */
     .DateInput_input {
         border-radius: 4px !important;

@@ -109,8 +109,13 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                 value=[],
                                 multi=True,
                                 searchable=True,
-                                className="mb-2",
-                                placeholder="Select one or more opponents"
+                                className="mb-2 multi-select-dropdown",
+                                placeholder="Select one or more opponents",
+                                style={
+                                    'min-height': '38px',
+                                    'height': 'auto',
+                                    'margin-bottom': '10px'
+                                }
                             ),
                             # New dropdown specifically for team groups
                             html.Div([
