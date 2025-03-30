@@ -58,15 +58,15 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                             {'label': 'Individual Team', 'value': 'individual'},
                             {'label': 'Team Group', 'value': 'group'}
                         ],
-                        value='individual',
+                        value='group',
                         className="mb-2"
                     ),
 
                     html.Label("Team:", className="fw-bold mb-2"),
                     dcc.Dropdown(
                         id='team-dropdown',
-                        options=[{'label': team, 'value': team} for team in teams],
-                        value='Key West (Combined)',  # Default to Key West (Combined)
+                        options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                        value=teams[1] if len(teams) > 1 else teams[0],  # Default to first non-Key West team
                         searchable=True,
                         className="mb-4"
                     ),
@@ -190,7 +190,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                             html.Label("Select teams to include:", className="fw-bold mb-2"),
                             dcc.Dropdown(
                                 id='teams-for-group',
-                                options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                                options=[{'label': team, 'value': team} for team in teams],
                                 value=[],
                                 multi=True,
                                 className="mb-2",
@@ -225,7 +225,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                             html.Div([
                                 dcc.Dropdown(
                                     id='edit-teams-for-group',
-                                    options=[{'label': team, 'value': team} for team in teams if team != 'Key West (Combined)'],
+                                    options=[{'label': team, 'value': team} for team in teams],
                                     value=[],
                                     multi=True,
                                     className="mb-2",

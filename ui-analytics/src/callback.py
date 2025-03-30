@@ -68,7 +68,6 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         # Handle different selection types
         if selection_type == 'individual':
-            team = team or 'Key West (Combined)'
             display_name = team
         else:  # 'group'
             team_group = team_group or (next(iter(team_groups.keys())) if team_groups else None)
@@ -160,20 +159,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
     def get_team_match_data(conn, team, filter_conditions):
         """Get match data for the selected team."""
-        if team == 'Key West (Combined)':
-            team_filter = get_key_west_team_filter()
-
-            # Debug query for Key West games
-            debug_keywest_query = get_debug_key_west_query(filter_conditions)
-            debug_keywest_df = conn.execute(debug_keywest_query).fetchdf()
-            print(f"Debug: Found {len(debug_keywest_df)} Key West games after filtering")
-            for _, row in debug_keywest_df.iterrows():
-                print(f"Debug: Key West Game - {row['date']} - {row['home_team']} vs {row['away_team']}")
-
-            matches_query = get_combined_matches_query(team, filter_conditions)
-        else:
-            matches_query = get_team_matches_query(team, filter_conditions)
-
+        matches_query = get_team_matches_query(team, filter_conditions)
         return conn.execute(matches_query).fetchdf()
 
     def get_team_group_match_data(conn, group_name, filter_conditions):
@@ -946,14 +932,13 @@ def init_callbacks(app, teams, team_groups_param, conn):
     def update_opponent_options(filter_type, team, team_group, selection_type, start_date, end_date, competitiveness_threshold):
         # Default opponents (all teams except selected team/group)
         if selection_type == 'individual':
-            all_opponents = [{'label': t, 'value': t} for t in teams if t != team and t != 'Key West (Combined)']
+            all_opponents = [{'label': t, 'value': t} for t in teams if t != team]
         else:  # 'group'
             if not team_group or team_group not in team_groups:
                 return [], []  # No group selected or invalid group
 
             group_teams = team_groups.get(team_group, [])
-            all_opponents = [{'label': t, 'value': t} for t in teams
-                           if t != 'Key West (Combined)' and t not in group_teams]
+            all_opponents = [{'label': t, 'value': t} for t in teams if t not in group_teams]
 
         # If filter type is 'worthy', compute worthy opponents
         if filter_type == 'worthy':
@@ -966,11 +951,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             filter_conditions = f"date >= '{start_date}' AND date <= '{end_date}'"
 
             if selection_type == 'individual':
-                if team == 'Key West (Combined)':
-                    team_filter = get_key_west_team_filter()
-                    opponent_query = get_opponent_query_for_key_west(filter_conditions, team_filter)
-                else:
-                    opponent_query = get_opponent_query_for_team(team, filter_conditions)
+                opponent_query = get_opponent_query_for_team(team, filter_conditions)
             else:  # 'group'
                 if not team_group or team_group not in team_groups:
                     return [], []  # No valid group selected

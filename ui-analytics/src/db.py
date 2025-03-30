@@ -27,7 +27,6 @@ def get_teams(conn):
         """
         teams_df = conn.execute(teams_query).fetchdf()
         teams = teams_df['team'].tolist()
-        teams.insert(0, "Key West (Combined)")
         print(f"Successfully retrieved {len(teams)} teams")
         return teams
     except Exception as e:
