@@ -7,14 +7,14 @@ def get_loading_spinner():
     return dbc.Spinner(
         id="loading-spinner",
         fullscreen=True,
-        color="#6F42C1",
+        color="#20A7C9",
         type="grow",
         children=[
         html.Div([
             html.H3("Loading NC Soccer Analytics Dashboard...",
-                   style={"color": "#6F42C1", "text-align": "center", "margin-top": "20px"}),
+                   style={"color": "#20A7C9", "text-align": "center", "margin-top": "20px"}),
             html.P("Please wait while we prepare your data.",
-                  style={"color": "#5B6AFE", "text-align": "center"})
+                  style={"color": "#484848", "text-align": "center"})
         ])
     ]
 )
@@ -140,10 +140,10 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                         step=5,
                                         value=30,
                                         marks={
-                                            0: {'label': '0%', 'style': {'color': '#28A745'}},
-                                            30: {'label': '30%', 'style': {'color': '#5B6AFE'}},
-                                            70: {'label': '70%', 'style': {'color': '#DC3545'}},
-                                            100: {'label': '100%', 'style': {'color': '#DC3545'}}
+                                            0: {'label': '0%', 'style': {'color': '#44B78B'}},
+                                            30: {'label': '30%', 'style': {'color': '#20A7C9'}},
+                                            70: {'label': '70%', 'style': {'color': '#FF7F44'}},
+                                            100: {'label': '100%', 'style': {'color': '#E04355'}}
                                         },
                                         className="mb-1"
                                     ),
@@ -182,7 +182,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
 
                     # Team Groups Management Section
                     html.Div([
-                        html.H5("Team Groups Management", className="mb-3", style={'color': '#5B6AFE'}),
+                        html.H5("Team Groups Management", className="mb-3", style={'color': '#20A7C9'}),
 
                         html.Label("Create New Team Group:", className="fw-bold mb-2"),
                         dbc.Input(
@@ -287,7 +287,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-performance-metrics",
                     type="circle",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Row([
                             dbc.Col([
@@ -358,7 +358,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-performance-chart",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -374,7 +374,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-goal-charts",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -399,7 +399,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                         dcc.Loading(
                             id="loading-opponent-analysis",
                             type="default",
-                            color="#6F42C1",
+                            color="#20A7C9",
                             children=[
                                 dbc.Card([
                                     dbc.CardHeader("Opponent Performance Comparison"),
@@ -440,7 +440,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-match-results",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -462,15 +462,16 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                     style_cell={
                                         'textAlign': 'left',
                                         'padding': '10px',
-                                        'fontFamily': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif',
-                                        'color': '#343A40'
+                                        'fontFamily': 'Inter, Helvetica Neue, Helvetica, Arial, sans-serif',
+                                        'color': '#323232'
                                     },
                                     style_header={
-                                        'backgroundColor': '#5B6AFE',
-                                        'color': 'white',
+                                        'backgroundColor': '#F5F5F5',
+                                        'color': '#484848',
                                         'fontWeight': 'bold',
                                         'textAlign': 'left',
-                                        'border': 'none'
+                                        'border': 'none',
+                                        'borderBottom': '1px solid #E0E0E0'
                                     },
                                     style_data={
                                         'border': 'none',
@@ -479,32 +480,32 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                     style_data_conditional=[
                                         {
                                             'if': {'filter_query': '{result} contains "Win"'},
-                                            'backgroundColor': 'rgba(40, 167, 69, 0.1)',
-                                            'borderLeft': '3px solid #28A745'
+                                            'backgroundColor': 'rgba(68, 183, 139, 0.1)',
+                                            'borderLeft': '3px solid #44B78B'
                                         },
                                         {
                                             'if': {'filter_query': '{result} contains "Draw"'},
-                                            'backgroundColor': 'rgba(91, 106, 254, 0.1)',
-                                            'borderLeft': '3px solid #5B6AFE'
+                                            'backgroundColor': 'rgba(252, 199, 0, 0.1)',
+                                            'borderLeft': '3px solid #FCC700'
                                         },
                                         {
                                             'if': {'filter_query': '{result} contains "Loss"'},
-                                            'backgroundColor': 'rgba(220, 53, 69, 0.1)',
-                                            'borderLeft': '3px solid #DC3545'
+                                            'backgroundColor': 'rgba(224, 67, 85, 0.1)',
+                                            'borderLeft': '3px solid #E04355'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Win"'},
-                                            'color': '#28A745',
+                                            'color': '#44B78B',
                                             'fontWeight': 'bold'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Draw"'},
-                                            'color': '#5B6AFE',
+                                            'color': '#FCC700',
                                             'fontWeight': 'bold'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Loss"'},
-                                            'color': '#DC3545',
+                                            'color': '#E04355',
                                             'fontWeight': 'bold'
                                         }
                                     ]

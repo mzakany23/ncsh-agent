@@ -207,6 +207,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
                 filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
                 print(f"Debug: Selected specific opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
+            else:
+                print("Debug: No matches found in the initial dataset")
 
         elif filter_type == 'team_groups' and opponent_team_groups and len(opponent_team_groups) > 0:
             # Filter to include only matches against opponents in selected team groups
@@ -230,18 +232,29 @@ def init_callbacks(app, teams, team_groups_param, conn):
                     # If no teams in the selected groups, return empty DataFrame
                     filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
                     print(f"Debug: No teams found in the selected team groups")
+            else:
+                print("Debug: No matches found in the initial dataset")
 
         elif filter_type == 'worthy':
-            if opponent_selection and len(opponent_selection) > 0:
+            if opponent_selection and len(opponent_selection) > 0 and '' not in opponent_selection:
                 # Filter to include only matches against specific worthy opponents
                 if not filtered_matches_df.empty:
                     filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
                     filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
                     print(f"Debug: Selected worthy opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
+                else:
+                    print("Debug: No matches found in the initial dataset")
             else:
                 # Automatically identify worthy opponents
                 if not filtered_matches_df.empty:
                     worthy_opponents = identify_worthy_opponents(filtered_matches_df, competitiveness_threshold)
+
+                    # Always include Key West teams as worthy opponents
+                    key_west_worthy = [team for team in matches_df['opponent_team'].unique()
+                                      if 'key west' in team.lower() and team not in worthy_opponents]
+                    worthy_opponents.extend(key_west_worthy)
+
+                    print(f"Debug: Auto-identified worthy opponents: {worthy_opponents}")
 
                     if worthy_opponents:
                         filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
@@ -251,6 +264,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
                         # If no worthy opponents found, keep the filtered dataframe empty
                         filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
                         print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
+                else:
+                    print("Debug: No matches found in the initial dataset")
 
         # Remove the normalized_opponent column if it exists before further processing
         if 'normalized_opponent' in filtered_matches_df.columns:
@@ -259,6 +274,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
         # Only hide opponent analysis if truly no data after filtering
         if len(filtered_matches_df) == 0:
             display_opponent_analysis = {'display': 'none'}
+            print("Debug: No matches after filtering, hiding opponent analysis")
+        else:
+            print(f"Debug: Found {len(filtered_matches_df)} matches after filtering, showing opponent analysis")
 
         return filtered_matches_df, display_opponent_analysis
 
@@ -369,7 +387,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 y=sorted_df['cumulative_wins'],
                 mode='lines+markers',
                 name='Wins',
-                line=dict(color='#28a745', width=3),
+                line=dict(color='#44B78B', width=3),  # Superset success color
                 marker=dict(size=8, symbol='circle', line=dict(width=2, color='white')),
                 hovertemplate='Date: %{x}<br>Wins: %{y}<extra></extra>'
             ))
@@ -378,7 +396,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 y=sorted_df['cumulative_draws'],
                 mode='lines+markers',
                 name='Draws',
-                line=dict(color='#5B6AFE', width=3),
+                line=dict(color='#FCC700', width=3),  # Superset warning color
                 marker=dict(size=8, symbol='circle', line=dict(width=2, color='white')),
                 hovertemplate='Date: %{x}<br>Draws: %{y}<extra></extra>'
             ))
@@ -387,7 +405,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 y=sorted_df['cumulative_losses'],
                 mode='lines+markers',
                 name='Losses',
-                line=dict(color='#dc3545', width=3),
+                line=dict(color='#E04355', width=3),  # Superset danger color
                 marker=dict(size=8, symbol='circle', line=dict(width=2, color='white')),
                 hovertemplate='Date: %{x}<br>Losses: %{y}<extra></extra>'
             ))
@@ -396,7 +414,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             performance_fig.add_annotation(
                 text="No matches found with the current filters",
                 showarrow=False,
-                font=dict(size=14, color="#6F42C1"),
+                font=dict(size=14, color="#20A7C9"),  # Superset primary color
                 xref="paper", yref="paper",
                 x=0.5, y=0.5
             )
@@ -407,15 +425,15 @@ def init_callbacks(app, teams, team_groups_param, conn):
         performance_fig.update_layout(
             title={
                 'text': f'{display_team} Performance Over Time',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}  # Superset font
             },
             xaxis_title={
                 'text': 'Date',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             yaxis_title={
                 'text': 'Cumulative Count',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             legend={
                 'orientation': 'h',
@@ -423,9 +441,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 'y': 1.02,
                 'xanchor': 'right',
                 'x': 1,
-                'font': {'size': 12, 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'},
+                'font': {'size': 12, 'family': 'Inter, Helvetica Neue, Arial, sans-serif'},
                 'bgcolor': 'rgba(255, 255, 255, 0.8)',
-                'bordercolor': '#DEE2E6',
+                'bordercolor': '#E0E0E0',
                 'borderwidth': 1
             },
             plot_bgcolor='white',
@@ -434,17 +452,17 @@ def init_callbacks(app, teams, team_groups_param, conn):
             margin=dict(l=60, r=30, t=80, b=60),
             xaxis=dict(
                 showgrid=True,
-                gridcolor='#E9ECEF',
+                gridcolor='#F5F5F5',
                 showline=True,
-                linecolor='#DEE2E6',
-                tickfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=12, color='#343A40')
+                linecolor='#E0E0E0',
+                tickfont=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=12, color='#323232')
             ),
             yaxis=dict(
                 showgrid=True,
-                gridcolor='#E9ECEF',
+                gridcolor='#F5F5F5',
                 showline=True,
-                linecolor='#DEE2E6',
-                tickfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=12, color='#343A40')
+                linecolor='#E0E0E0',
+                tickfont=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=12, color='#323232')
             )
         )
 
@@ -458,8 +476,8 @@ def init_callbacks(app, teams, team_groups_param, conn):
             {'Metric': 'Goal Difference', 'Value': goal_diff}
         ])
 
-        # Define custom colors that match our CSS palette
-        colors = ['#28A745', '#DC3545', '#5B6AFE']
+        # Define custom colors that match the Superset palette
+        colors = ['#44B78B', '#E04355', '#20A7C9']  # success, danger, primary
 
         # Create a more visually appealing bar chart
         goal_fig = go.Figure()
@@ -473,7 +491,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                     marker_color=colors[i],
                     text=[row['Value']],
                     textposition='auto',
-                    textfont={'color': 'white' if i != 2 or row['Value'] < 0 else '#343A40'},
+                    textfont={'color': 'white' if i != 2 or row['Value'] < 0 else '#323232'},
                     hovertemplate='%{x}: %{y}<extra></extra>'
                 ))
         else:
@@ -481,24 +499,24 @@ def init_callbacks(app, teams, team_groups_param, conn):
             goal_fig.add_annotation(
                 text="No matches found with the current filters",
                 showarrow=False,
-                font=dict(size=14, color="#6F42C1"),
+                font=dict(size=14, color="#20A7C9"),  # Superset primary color
                 xref="paper", yref="paper",
                 x=0.5, y=0.5
             )
 
-        # Apply chart layout
+        # Apply chart layout with Superset styling
         goal_fig.update_layout(
             title={
                 'text': f'Goal Statistics',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             xaxis_title={
                 'text': 'Metric',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             yaxis_title={
                 'text': 'Count',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             legend_title_text='',
             showlegend=False,
@@ -508,16 +526,16 @@ def init_callbacks(app, teams, team_groups_param, conn):
             xaxis=dict(
                 showgrid=False,
                 showline=True,
-                linecolor='#DEE2E6',
-                tickfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=14, color='#343A40')
+                linecolor='#E0E0E0',
+                tickfont=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=14, color='#323232')
             ),
             yaxis=dict(
                 showgrid=True,
-                gridcolor='#E9ECEF',
+                gridcolor='#F5F5F5',
                 showline=True,
-                linecolor='#DEE2E6',
-                tickfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=12, color='#343A40'),
-                zerolinecolor='#DEE2E6'
+                linecolor='#E0E0E0',
+                tickfont=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=12, color='#323232'),
+                zerolinecolor='#E0E0E0'
             ),
             bargap=0.3
         )
@@ -531,7 +549,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
         if not filtered_matches_df.empty:
             results_count = filtered_matches_df['result'].value_counts()
 
-            # Create a better visualization with results distribution
+            # Create a better visualization with results distribution using Superset colors
             pie_fig.add_trace(go.Pie(
                 labels=['Wins', 'Draws', 'Losses'],
                 values=[
@@ -540,9 +558,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
                     results_count.get('Loss', 0)
                 ],
                 hole=0.4,
-                marker=dict(colors=['#28A745', '#5B6AFE', '#DC3545']),
+                marker=dict(colors=['#44B78B', '#FCC700', '#E04355']),  # Superset colors
                 textinfo='label+percent',
-                textfont=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=14),
+                textfont=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=14),
                 hoverinfo='label+value',
                 pull=[0.05, 0, 0]
             ))
@@ -551,16 +569,16 @@ def init_callbacks(app, teams, team_groups_param, conn):
             pie_fig.add_annotation(
                 text="No matches found with the current filters",
                 showarrow=False,
-                font=dict(size=14, color="#6F42C1"),
+                font=dict(size=14, color="#20A7C9"),  # Superset primary color
                 xref="paper", yref="paper",
                 x=0.5, y=0.5
             )
 
-        # Apply chart layout
+        # Apply chart layout with Superset styling
         pie_fig.update_layout(
             title={
                 'text': f'Match Result Distribution',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             legend=dict(
                 orientation='h',
@@ -568,7 +586,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 y=-0.2,
                 xanchor='center',
                 x=0.5,
-                font=dict(family='Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif', size=12)
+                font=dict(family='Inter, Helvetica Neue, Arial, sans-serif', size=12)
             ),
             plot_bgcolor='white',
             paper_bgcolor='white',
@@ -686,7 +704,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             x=opponent_stats_df['opponent'],
             y=opponent_stats_df['win_rate'] * 100,  # Convert to percentage value
             name='Win Rate',
-            marker_color='#28A745',
+            marker_color='#44B78B',  # Superset success color
             text=[f"{wr*100:.1f}%" for wr in opponent_stats_df['win_rate']],  # Format as percentage
             textposition='auto',
             hovertemplate='%{x}<br>Win Rate: %{text}<extra></extra>'
@@ -696,7 +714,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             x=opponent_stats_df['opponent'],
             y=opponent_stats_df['total_matches'],
             name='Matches Played',
-            marker_color='#5B6AFE',
+            marker_color='#20A7C9',  # Superset primary color
             text=opponent_stats_df['total_matches'],
             textposition='auto',
             yaxis='y2',
@@ -706,31 +724,31 @@ def init_callbacks(app, teams, team_groups_param, conn):
         opponent_comparison_chart.update_layout(
             title={
                 'text': 'Performance Against Opponents',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             xaxis_title={
                 'text': 'Opponent',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             yaxis=dict(
                 title={
                     'text': 'Win Rate',
-                    'font': {'color': '#28A745'}
+                    'font': {'color': '#44B78B'}
                 },
-                tickformat='.0f',  # Changed from '.0%' to '.0f'
-                range=[0, 110],    # Changed from [0, 1.1] to [0, 110]
+                tickformat='.0f',
+                range=[0, 110],
                 side='left',
-                tickfont=dict(color='#28A745')
+                tickfont=dict(color='#44B78B')
             ),
             yaxis2=dict(
                 title={
                     'text': 'Matches Played',
-                    'font': {'color': '#5B6AFE'}
+                    'font': {'color': '#20A7C9'}
                 },
                 range=[0, max(opponent_stats_df['total_matches']) * 1.2] if len(opponent_stats_df) > 0 else [0, 10],
                 side='right',
                 overlaying='y',
-                tickfont=dict(color='#5B6AFE')
+                tickfont=dict(color='#20A7C9')
             ),
             barmode='group',
             plot_bgcolor='white',
@@ -758,7 +776,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 values=[row['wins'], row['draws'], row['losses']],
                 name=row['opponent'],
                 title=row['opponent'],
-                marker_colors=['#28A745', '#5B6AFE', '#DC3545'],
+                marker_colors=['#44B78B', '#FCC700', '#E04355'],  # Superset colors
                 visible=(i == 0)  # Only show first opponent by default
             ))
 
@@ -771,13 +789,13 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 label=row['opponent'],
                 args=[{'visible': visibility},
                     {'title': {'text': f'Win/Loss Breakdown vs {row["opponent"]}',
-                                'font': {'size': 20, 'color': '#6F42C1'}}}]
+                                'font': {'size': 20, 'color': '#20A7C9'}}}]
             ))
 
         opponent_win_rate_chart.update_layout(
             title={
                 'text': f'Win/Loss Breakdown vs {opponent_stats_df.iloc[0]["opponent"] if len(opponent_stats_df) > 0 else ""}',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             updatemenus=[{
                 'buttons': buttons,
@@ -806,7 +824,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             x=opponent_stats_df['opponent'],
             y=opponent_stats_df['goals_for'],
             name='Goals Scored',
-            marker_color='#28A745',
+            marker_color='#44B78B',  # Superset success color
             text=opponent_stats_df['goals_for'],
             textposition='auto',
             hovertemplate='%{x}<br>Goals Scored: %{y}<extra></extra>'
@@ -816,7 +834,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
             x=opponent_stats_df['opponent'],
             y=opponent_stats_df['goals_against'],
             name='Goals Conceded',
-            marker_color='#DC3545',
+            marker_color='#E04355',  # Superset danger color
             text=opponent_stats_df['goals_against'],
             textposition='auto',
             hovertemplate='%{x}<br>Goals Conceded: %{y}<extra></extra>'
@@ -825,15 +843,15 @@ def init_callbacks(app, teams, team_groups_param, conn):
         opponent_goal_diff_chart.update_layout(
             title={
                 'text': 'Goal Performance by Opponent',
-                'font': {'size': 20, 'color': '#6F42C1', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 20, 'color': '#20A7C9', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             xaxis_title={
                 'text': 'Opponent',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             yaxis_title={
                 'text': 'Goals',
-                'font': {'size': 14, 'color': '#343A40', 'family': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif'}
+                'font': {'size': 14, 'color': '#323232', 'family': 'Inter, Helvetica Neue, Arial, sans-serif'}
             },
             barmode='group',
             plot_bgcolor='white',
@@ -909,9 +927,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
     def toggle_opponent_controls(filter_type):
         # Default dropdown style that allows proper multi-selection display
         multi_select_style = {
-            'display': 'block',
             'min-height': '38px',
-            'height': 'auto'
+            'height': 'auto',
+            'margin-bottom': '10px',
+            'position': 'relative',
+            'zIndex': 1000,
+            'display': 'block'
         }
 
         if filter_type == 'specific':
@@ -978,6 +999,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
             worthy_opponent_values = []  # To store just the values for selection
             opponents_with_wins = set()  # Track opponents who have defeated us
 
+            # Special handling - Any team with "Key West" in the name should be considered worthy
+            key_west_teams = []
+
             # Group by opponent, but normalize names first to handle case variations
             # Add a normalized column for grouping
             if not opponent_df.empty:
@@ -991,8 +1015,13 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 name_mapping = {}
                 for _, row in opponent_df.iterrows():
                     norm_name = row['normalized_opponent']
+                    original_name = row['opponent']
                     if norm_name not in name_mapping:
-                        name_mapping[norm_name] = row['opponent']
+                        name_mapping[norm_name] = original_name
+
+                    # Add Key West teams to a special list
+                    if 'key west' in original_name.lower():
+                        key_west_teams.append(original_name)
 
                 # First identify opponents who have defeated us (these are automatic worthy adversaries)
                 for norm_opponent, group in opponent_groups:
@@ -1012,11 +1041,20 @@ def init_callbacks(app, teams, team_groups_param, conn):
                         # Add to worthy opponents with note that they've defeated us
                         worthy_opponents.append({
                             'label': f"{display_name} ({total_matches} matches, defeated us {opponent_wins} times)",
-                            'value': display_name,
-                            'competitiveness': 100  # Max competitiveness for teams that defeated us
+                            'value': display_name
                         })
                         worthy_opponent_values.append(display_name)
                         print(f"Debug: Auto-including opponent {display_name} who defeated us {opponent_wins} times")
+
+                # Add all Key West teams as worthy opponents
+                for team_name in set(key_west_teams):
+                    if team_name not in worthy_opponent_values:
+                        worthy_opponents.append({
+                            'label': f"{team_name} (Key West team)",
+                            'value': team_name
+                        })
+                        worthy_opponent_values.append(team_name)
+                        print(f"Debug: Adding Key West team as worthy opponent: {team_name}")
 
                 # Then evaluate other opponents based on competitiveness
                 for norm_opponent, group in opponent_groups:
@@ -1024,10 +1062,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
                     if norm_opponent in opponents_with_wins:
                         continue
 
-                    if len(group) >= 1:  # Reduced minimum match threshold to 1
-                        # Use the original name for display
-                        display_name = name_mapping[norm_opponent]
+                    # Skip Key West teams (already added above)
+                    display_name = name_mapping[norm_opponent]
+                    if display_name in worthy_opponent_values:
+                        continue
 
+                    if len(group) >= 1:  # Reduced minimum match threshold to 1
                         # Calculate results against this opponent
                         wins = len(group[group['result'] == 'Win'])
                         losses = len(group[group['result'] == 'Loss'])
@@ -1049,13 +1089,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
                             total_matches = len(group)
                             worthy_opponents.append({
                                 'label': f"{display_name} ({total_matches} matches, {competitiveness_score:.0f}% competitive)",
-                                'value': display_name,
-                                'competitiveness': competitiveness_score
+                                'value': display_name
                             })
                             worthy_opponent_values.append(display_name)
 
             # Sort by competitiveness (most competitive first)
-            worthy_opponents = sorted(worthy_opponents, key=lambda x: x['competitiveness'], reverse=True)
+            worthy_opponents = sorted(worthy_opponents, key=lambda x: x['label'])
 
             if worthy_opponents:
                 # Return all worthy opponents' options and all values already selected
