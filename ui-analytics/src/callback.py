@@ -1286,9 +1286,11 @@ def init_callbacks(app, teams, team_groups_param, conn):
     # Callback to update team group options for the opponent filter
     @app.callback(
         Output('opponent-team-groups', 'options'),
-        [Input('group-management-status', 'children')]  # Trigger when team groups change
+        [Input('group-management-status', 'children'),
+         Input('team-group-dropdown', 'value'),
+         Input('team-selection-type', 'value')]  # Add inputs for current selection and selection type
     )
-    def update_opponent_team_groups(status_change):
+    def update_opponent_team_groups(status_change, current_team_group, selection_type):
         """Update the team groups dropdown in the opponent filter section"""
         # Query the database directly for the most up-to-date list
         conn = get_db_connection()
@@ -1296,12 +1298,54 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         try:
             cursor.execute("SELECT name FROM team_groups ORDER BY name")
-            group_names = [row[0] for row in cursor.fetchall()]
-            print(f"Updating opponent team groups dropdown with {len(group_names)} groups")
+            all_group_names = [row[0] for row in cursor.fetchall()]
+
+            # Filter out the currently selected team group when in Team Group mode
+            if selection_type == 'group' and current_team_group:
+                group_names = [name for name in all_group_names if name != current_team_group]
+                print(f"Updating opponent team groups dropdown with {len(group_names)} groups (excluded {current_team_group})")
+            else:
+                group_names = all_group_names
+                print(f"Updating opponent team groups dropdown with all {len(group_names)} groups")
+
             return [{'label': name, 'value': name} for name in group_names]
         except sqlite3.Error as e:
             print(f"Error querying team groups for opponent dropdown: {str(e)}")
-            # Fall back to the global variable
-            return [{'label': group_name, 'value': group_name} for group_name in team_groups.keys()]
+            # Fall back to the global variable, but still filter out current selection
+            if selection_type == 'group' and current_team_group:
+                group_names = [name for name in team_groups.keys() if name != current_team_group]
+            else:
+                group_names = list(team_groups.keys())
+            return [{'label': group_name, 'value': group_name} for group_name in group_names]
         finally:
             conn.close()
+
+    # Callback to reset opponent team groups selection when team selection changes
+    @app.callback(
+        Output('opponent-team-groups', 'value'),
+        [Input('team-group-dropdown', 'value'),
+         Input('team-selection-type', 'value')],
+        [State('opponent-team-groups', 'value')]
+    )
+    def reset_opponent_team_groups(current_team_group, selection_type, current_selection):
+        """Reset the opponent team groups selection when team selection changes"""
+        # Get the callback context to check what triggered this callback
+        ctx = callback_context
+        if not ctx.triggered:
+            # If not triggered by any input, just return the current selection
+            return current_selection
+
+        # Get the ID of the input that triggered this callback
+        triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+        if triggered_id in ['team-group-dropdown', 'team-selection-type']:
+            # If the selection type is 'group' and current_team_group is in the current selection,
+            # remove it and return the filtered selection
+            if selection_type == 'group' and current_team_group and current_selection:
+                if isinstance(current_selection, list) and current_team_group in current_selection:
+                    new_selection = [group for group in current_selection if group != current_team_group]
+                    print(f"Removed {current_team_group} from opponent team groups selection")
+                    return new_selection
+
+        # Otherwise, just return the current selection unchanged
+        return current_selection
