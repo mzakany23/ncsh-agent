@@ -1105,9 +1105,10 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
     @app.callback(
         [Output('edit-teams-for-group', 'value'),
-        Output('edit-group-dropdown', 'options')],
+         Output('edit-group-dropdown', 'options'),
+         Output('edit-group-name', 'value')],
         [Input('edit-group-dropdown', 'value'),
-        Input('group-management-status', 'children')]  # Use this to trigger refresh when team groups change
+         Input('group-management-status', 'children')]  # Use this to trigger refresh when team groups change
     )
     def populate_edit_teams(group_name, status_change):
         """Populate the edit teams dropdown with the teams from the selected group."""
@@ -1135,7 +1136,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         # Early return if no group is selected
         if not group_name:
-            return [], group_options
+            return [], group_options, ""
 
         # Query the database directly to get the team members
         print(f"Retrieving team members for group '{group_name}'")
@@ -1150,7 +1151,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
             if not group_row:
                 print(f"Group '{group_name}' not found in database")
-                return [], group_options
+                return [], group_options, ""
 
             group_id = group_row[0]
 
@@ -1159,10 +1160,10 @@ def init_callbacks(app, teams, team_groups_param, conn):
             teams = [row[0] for row in cursor.fetchall()]
 
             print(f"Found {len(teams)} teams for group '{group_name}': {teams}")
-            return teams, group_options
+            return teams, group_options, group_name
         except sqlite3.Error as e:
             print(f"Error retrieving team members for group '{group_name}': {str(e)}")
-            return [], group_options
+            return [], group_options, ""
         finally:
             conn.close()
 
@@ -1180,10 +1181,11 @@ def init_callbacks(app, teams, team_groups_param, conn):
         State('teams-for-group', 'value'),
         State('edit-group-dropdown', 'value'),
         State('edit-teams-for-group', 'value'),
+        State('edit-group-name', 'value'),
         State('team-group-dropdown', 'value')]
     )
     def manage_team_groups(create_clicks, update_clicks, delete_clicks,
-                        new_name, new_teams, edit_name, edit_teams, current_selection):
+                        new_name, new_teams, edit_name, edit_teams, edit_new_name, current_selection):
         """Handle team group management operations."""
         # Declare team_groups as global to access the module-level variable
         global team_groups
@@ -1193,7 +1195,7 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
         print(f"Team group management triggered by: {triggered_id}")
         print(f"Current state - Create clicks: {create_clicks}, Update clicks: {update_clicks}, Delete clicks: {delete_clicks}")
-        print(f"Edit name: {edit_name}, Edit teams count: {len(edit_teams) if edit_teams else 0}")
+        print(f"Edit name: {edit_name}, New name: {edit_new_name}, Edit teams count: {len(edit_teams) if edit_teams else 0}")
         print(f"Current group selection: {current_selection}")
         print(f"BEFORE OPERATION: Global team_groups contains {len(team_groups)} groups: {list(team_groups.keys())}")
 
@@ -1218,16 +1220,23 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 status = f"Failed to create team group '{new_name}'. It may already exist."
                 new_name_value = new_name
                 new_teams_value = new_teams
+
         elif triggered_id == 'update-group-button' and edit_name and edit_teams:
             # Update an existing team group
-            if update_team_group(edit_name, edit_teams):
-                status = f"Team group '{edit_name}' updated successfully!"
+            # Use the new name if it's different from the original
+            renamed = edit_new_name and edit_new_name != edit_name
+            if update_team_group(edit_name, edit_teams, edit_new_name if renamed else None):
+                if renamed:
+                    status = f"Team group '{edit_name}' renamed to '{edit_new_name}' and updated successfully!"
+                    # If current selection is the updated group, update it with the new name
+                    if current_selection == edit_name:
+                        selected_group = edit_new_name
+                else:
+                    status = f"Team group '{edit_name}' updated successfully!"
+
                 # Refresh team groups after successful update
                 team_groups = get_team_groups()
                 print(f"AFTER UPDATE: Global team_groups refreshed, now contains {len(team_groups)} groups: {list(team_groups.keys())}")
-                # If current selection is the updated group, keep it selected
-                if current_selection == edit_name:
-                    selected_group = edit_name
             else:
                 status = f"Failed to update team group '{edit_name}'."
 

@@ -214,6 +214,13 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                 className="mb-2",
                                 style={'position': 'relative', 'zIndex': 1020}, # Increased z-index to appear above other elements
                             ),
+                            html.Label("Group Name:", className="fw-bold mb-2"),
+                            dbc.Input(
+                                id="edit-group-name",
+                                type="text",
+                                placeholder="Enter new group name",
+                                className="mb-2"
+                            ),
                             html.Label("Select teams to edit:", className="fw-bold mb-2"),
                             html.Div([
                                 dcc.Dropdown(

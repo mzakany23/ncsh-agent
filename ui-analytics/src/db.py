@@ -202,7 +202,7 @@ def get_team_groups():
         conn.close()
 
 
-def update_team_group(name, teams):
+def update_team_group(name, teams, new_name=None):
     """Update an existing team group."""
     if not name:
         return False
@@ -220,6 +220,22 @@ def update_team_group(name, teams):
             return False
 
         group_id = row[0]
+
+        # Start a transaction
+        conn.execute("BEGIN TRANSACTION")
+
+        # Update the name if a new name is provided and it's different
+        if new_name and new_name != name:
+            # Check if the new name already exists
+            cursor.execute("SELECT id FROM team_groups WHERE name = ? AND id != ?", (new_name, group_id))
+            if cursor.fetchone():
+                print(f"Cannot rename group to '{new_name}' as a group with that name already exists")
+                conn.rollback()
+                return False
+
+            cursor.execute("UPDATE team_groups SET name = ? WHERE id = ?", (new_name, group_id))
+            print(f"Renamed team group from '{name}' to '{new_name}'")
+            name = new_name  # Use the new name for the rest of the function
 
         # Delete existing members
         cursor.execute("DELETE FROM team_group_members WHERE group_id = ?", (group_id,))
