@@ -237,7 +237,7 @@ def get_opponent_query_for_team(team, filter_conditions):
         CASE
             WHEN home_team = '{team}' THEN away_team
             WHEN away_team = '{team}' THEN home_team
-        END AS opponent,
+        END AS opponent_team,
         CASE
             WHEN home_team = '{team}' AND home_score > away_score THEN 'Win'
             WHEN away_team = '{team}' AND away_score > home_score THEN 'Win'
@@ -251,7 +251,8 @@ def get_opponent_query_for_team(team, filter_conditions):
         CASE
             WHEN home_team = '{team}' THEN away_score
             WHEN away_team = '{team}' THEN home_score
-        END AS opponent_score
+        END AS opponent_score,
+        date
     FROM soccer_data
     WHERE ({filter_conditions}) AND (home_team = '{team}' OR away_team = '{team}')
     """
@@ -348,7 +349,7 @@ def get_opponent_query_for_team_group(teams, filter_conditions):
         CASE
             WHEN ({home_condition_str}) THEN away_team
             WHEN ({away_condition_str}) THEN home_team
-        END AS opponent,
+        END AS opponent_team,
         CASE
             WHEN ({home_condition_str}) AND home_score > away_score THEN 'Win'
             WHEN ({away_condition_str}) AND away_score > home_score THEN 'Win'
@@ -362,7 +363,8 @@ def get_opponent_query_for_team_group(teams, filter_conditions):
         CASE
             WHEN ({home_condition_str}) THEN away_score
             WHEN ({away_condition_str}) THEN home_score
-        END AS opponent_score
+        END AS opponent_score,
+        date
     FROM soccer_data
     WHERE ({filter_conditions}) AND {team_filter}
     """

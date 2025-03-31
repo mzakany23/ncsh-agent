@@ -1,43 +1,44 @@
 def init_style():
     custom_css = '''
     :root {
-        /* Primary Color Palette */
-        --primary: #6F42C1;         /* Main brand purple */
-        --primary-light: #9A7AD1;   /* Lighter purple for hover states */
-        --primary-dark: #5A32A3;    /* Darker purple for active states */
+        /* Apache Superset Color Palette */
+        --primary: #20A7C9;         /* Superset blue */
+        --primary-light: #66C2DA;   /* Lighter blue for hover states */
+        --primary-dark: #1A85A0;    /* Darker blue for active states */
 
         /* Secondary Colors */
-        --secondary: #5B6AFE;       /* Complementary blue for accents */
-        --accent: #00C2CB;          /* Teal accent for highlights */
+        --secondary: #484848;       /* Dark gray for headers and accents */
+        --accent: #FF7F44;          /* Superset orange for highlights */
 
         /* Neutral Colors */
-        --neutral-dark: #343A40;    /* Dark gray for text */
-        --neutral-medium: #6C757D;  /* Medium gray for secondary text */
-        --neutral-light: #E9ECEF;   /* Light gray for backgrounds */
+        --neutral-dark: #323232;    /* Dark gray for text */
+        --neutral-medium: #666666;  /* Medium gray for secondary text */
+        --neutral-light: #F5F5F5;   /* Light gray for backgrounds */
         --white: #FFFFFF;           /* White for cards and contrast */
 
         /* Semantic Colors */
-        --success: #28A745;         /* Green for positive metrics */
-        --warning: #5B6AFE;         /* Blue for neutral metrics */
-        --danger: #DC3545;          /* Red for negative metrics */
+        --success: #44B78B;         /* Green for positive metrics */
+        --warning: #FCC700;         /* Yellow for neutral metrics */
+        --danger: #E04355;          /* Red for negative metrics */
 
         /* UI Colors */
         --card-bg: var(--white);
         --body-bg: #F8F9FA;
-        --border-color: #DEE2E6;
+        --border-color: #E0E0E0;
         --shadow-color: rgba(0, 0, 0, 0.05);
     }
 
     body {
-        font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         background-color: var(--body-bg);
         color: var(--neutral-dark);
+        font-size: 14px;
     }
 
     /* Typography */
     h1, h2, h3, h4, h5, h6 {
         font-weight: 600;
-        color: var(--primary);
+        color: var(--secondary);
     }
 
     p {
@@ -51,29 +52,31 @@ def init_style():
 
     /* Card Styles */
     .card {
-        border-radius: 8px;
-        box-shadow: 0 4px 8px var(--shadow-color);
-        border: none;
-        margin-bottom: 20px;
+        border-radius: 4px;
+        box-shadow: 0 2px 6px var(--shadow-color);
+        border: 1px solid var(--border-color);
+        margin-bottom: 16px;
         background-color: var(--card-bg);
         overflow: hidden;
     }
 
     .card-header {
-        background-color: var(--primary);
-        color: var(--white);
-        border-bottom: none;
-        font-weight: 500;
-        padding: 12px 15px;
+        background-color: var(--white);
+        color: var(--secondary);
+        font-weight: 600;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 16px;
     }
 
     .card-header h4 {
-        color: var(--white);
+        color: var(--secondary);
         margin: 0;
+        font-size: 16px;
     }
 
     .card-body {
-        padding: 20px;
+        padding: 16px;
     }
 
     /* Summary Cards */
@@ -82,11 +85,13 @@ def init_style():
     }
 
     .summary-card .card-header {
-        background-color: var(--secondary);
+        background-color: var(--white);
+        color: var(--secondary);
+        border-bottom: 1px solid var(--border-color);
     }
 
     .summary-value {
-        font-size: 2.2rem;
+        font-size: 2rem;
         font-weight: 700;
         color: var(--primary);
         margin: 10px 0;
@@ -96,53 +101,58 @@ def init_style():
     .section-header {
         color: var(--secondary);
         font-weight: 600;
-        margin-top: 30px;
-        margin-bottom: 15px;
-        padding-bottom: 5px;
-        border-bottom: 2px solid var(--secondary);
+        margin-top: 24px;
+        margin-bottom: 12px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border-color);
     }
 
     /* Table Styles */
     .dash-table-container {
-        border-radius: 8px;
+        border-radius: 4px;
         overflow: hidden;
-        box-shadow: 0 2px 4px var(--shadow-color);
+        box-shadow: 0 1px 3px var(--shadow-color);
     }
 
     .dash-header {
-        background-color: var(--secondary) !important;
-        color: var(--white) !important;
+        background-color: var(--neutral-light) !important;
+        color: var(--secondary) !important;
         font-weight: 600 !important;
+        border-bottom: 1px solid var(--border-color) !important;
     }
 
     /* Results styling */
     .result-win {
-        background-color: rgba(40, 167, 69, 0.1) !important;
+        background-color: rgba(68, 183, 139, 0.1) !important;
         border-left: 3px solid var(--success) !important;
     }
 
     .result-draw {
-        background-color: rgba(91, 106, 254, 0.1) !important;
+        background-color: rgba(252, 199, 0, 0.1) !important;
         border-left: 3px solid var(--warning) !important;
     }
 
     .result-loss {
-        background-color: rgba(220, 53, 69, 0.1) !important;
+        background-color: rgba(224, 67, 85, 0.1) !important;
         border-left: 3px solid var(--danger) !important;
     }
 
     /* Filter panel styling */
     .filter-panel {
         background-color: var(--card-bg);
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 4px 8px var(--shadow-color);
+        border-radius: 4px;
+        padding: 16px;
+        box-shadow: 0 1px 3px var(--shadow-color);
+        border: 1px solid var(--border-color);
     }
 
     /* Dropdown styling */
     .Select-control {
-        border-radius: 6px !important;
+        border-radius: 4px !important;
         border: 1px solid var(--border-color) !important;
+        font-size: 14px !important;
+        height: auto !important;
+        min-height: 36px !important;
     }
 
     .Select-control:hover {
@@ -151,25 +161,74 @@ def init_style():
 
     .is-focused:not(.is-open) > .Select-control {
         border-color: var(--primary) !important;
-        box-shadow: 0 0 0 0.2rem rgba(111, 66, 193, 0.25) !important;
+        box-shadow: 0 0 0 0.2rem rgba(32, 167, 201, 0.25) !important;
     }
 
     .Select-menu-outer {
-        border-radius: 0 0 6px 6px !important;
+        border-radius: 0 0 4px 4px !important;
         border: 1px solid var(--border-color) !important;
         box-shadow: 0 2px 4px var(--shadow-color) !important;
+        font-size: 14px !important;
+        max-width: none !important;
+        width: auto !important;
+        min-width: 100% !important;
+    }
+
+    .Select-menu {
+        max-height: 300px !important;
+    }
+
+    .Select-option {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        padding: 8px 10px !important;
+    }
+
+    /* Multi-select dropdown styling */
+    .Select--multi .Select-value {
+        background-color: var(--primary-light) !important;
+        border-color: var(--primary) !important;
+        color: white !important;
+        border-radius: 2px !important;
+        margin-top: 3px !important;
+        margin-bottom: 3px !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: normal !important;
+        height: auto !important;
+        line-height: 1.4 !important;
+        padding: 2px 5px !important;
+    }
+
+    .Select--multi .Select-value-icon {
+        border-right-color: var(--primary) !important;
+    }
+
+    .Select--multi .Select-value-icon:hover {
+        background-color: var(--primary) !important;
+        color: white !important;
+    }
+
+    .Select-multi-value-wrapper {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        padding: 2px !important;
+        max-width: 100% !important;
     }
 
     /* Date picker styling */
     .DateInput_input {
         border-radius: 4px !important;
-        font-size: 0.9rem !important;
+        font-size: 14px !important;
         color: var(--neutral-dark) !important;
+        height: 36px !important;
     }
 
     .DateRangePickerInput {
-        border-radius: 6px !important;
+        border-radius: 4px !important;
         border: 1px solid var(--border-color) !important;
+        height: 36px !important;
     }
 
     .CalendarDay__selected,
@@ -233,6 +292,33 @@ def init_style():
         background-color: white !important;
     }
 
+    /* Button styling */
+    .btn {
+        border-radius: 4px;
+        font-weight: 500;
+        padding: 6px 12px;
+        font-size: 14px;
+    }
+
+    .btn-primary {
+        background-color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .btn-primary:hover {
+        background-color: var(--primary-dark);
+        border-color: var(--primary-dark);
+    }
+
+    /* Chart container styling like Superset */
+    .chart-container {
+        padding: 0;
+        border-radius: 4px;
+        overflow: hidden;
+        background-color: var(--white);
+        border: 1px solid var(--border-color);
+    }
+
     /* Responsive Design */
     @media (max-width: 768px) {
         .summary-card {
@@ -290,7 +376,7 @@ def init_style():
 
     ._dash-loading-callback::after {
         content: 'Loading dashboard...';
-        font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-size: 1.5rem;
         color: var(--primary);
         margin-top: 1rem;
@@ -315,6 +401,11 @@ def init_style():
         100% {
             transform: rotate(360deg);
         }
+    }
+
+    /* Fix for dropdown height to show full text */
+    .Select.has-value.Select--multi .Select-input {
+        margin-top: 3px !important;
     }
     '''
     return custom_css
