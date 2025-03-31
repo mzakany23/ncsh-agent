@@ -236,36 +236,48 @@ def init_callbacks(app, teams, team_groups_param, conn):
                 print("Debug: No matches found in the initial dataset")
 
         elif filter_type == 'worthy':
-            if opponent_selection and len(opponent_selection) > 0 and '' not in opponent_selection:
-                # Filter to include only matches against specific worthy opponents
-                if not filtered_matches_df.empty:
-                    filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
-                    filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, opponent_selection)
-                    print(f"Debug: Selected worthy opponents: {opponent_selection}, found {len(filtered_matches_df)} matches")
+            if not filtered_matches_df.empty:
+                # Normalize team names for consistent matching
+                filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
+
+                # If specific opponents are selected, these are our worthy opponents
+                if opponent_selection and len(opponent_selection) > 0 and '' not in opponent_selection:
+                    print(f"Debug: Using manually selected worthy opponents: {opponent_selection}")
+                    worthy_opponents = opponent_selection
                 else:
-                    print("Debug: No matches found in the initial dataset")
-            else:
-                # Automatically identify worthy opponents
-                if not filtered_matches_df.empty:
+                    # Auto-identify worthy opponents from the filtered dataset
                     worthy_opponents = identify_worthy_opponents(filtered_matches_df, competitiveness_threshold)
 
-                    # Always include Key West teams as worthy opponents
-                    key_west_worthy = [team for team in matches_df['opponent_team'].unique()
-                                      if 'key west' in team.lower() and team not in worthy_opponents]
-                    worthy_opponents.extend(key_west_worthy)
+                    # Add Key West teams if they're in our filtered dataset
+                    key_west_teams = [team for team in filtered_matches_df['opponent_team'].unique()
+                                     if 'key west' in str(team).lower() and team not in worthy_opponents]
+
+                    if key_west_teams:
+                        print(f"Debug: Adding Key West teams as worthy opponents: {key_west_teams}")
+                        worthy_opponents.extend(key_west_teams)
 
                     print(f"Debug: Auto-identified worthy opponents: {worthy_opponents}")
 
-                    if worthy_opponents:
-                        filtered_matches_df = normalize_team_names_in_dataframe(filtered_matches_df)
-                        filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, worthy_opponents)
-                        print(f"Debug: Dashboard - Found {len(worthy_opponents)} worthy opponents: {worthy_opponents}")
-                    else:
-                        # If no worthy opponents found, keep the filtered dataframe empty
-                        filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
-                        print(f"Debug: Dashboard - No worthy opponents found with threshold {competitiveness_threshold}")
+                # Now filter to matches against only the worthy opponents
+                if worthy_opponents:
+                    # Use exact match on the original opponent names first, then fall back to normalized matching
+                    print(f"Debug: Filtering matches against worthy opponents: {worthy_opponents}")
+
+                    # Use the improved filter_matches_by_opponents function
+                    filtered_matches_df = filter_matches_by_opponents(filtered_matches_df, worthy_opponents)
+
+                    print(f"Debug: After filtering, found {len(filtered_matches_df)} matches against {len(worthy_opponents)} worthy opponents")
+                    # Print each opponent and the number of matches against them
+                    if not filtered_matches_df.empty:
+                        for opponent in worthy_opponents:
+                            match_count = len(filtered_matches_df[filtered_matches_df['opponent_team'] == opponent])
+                            print(f"Debug: Found {match_count} matches against worthy opponent '{opponent}'")
                 else:
-                    print("Debug: No matches found in the initial dataset")
+                    # No worthy opponents found
+                    filtered_matches_df = pd.DataFrame(columns=filtered_matches_df.columns)
+                    print(f"Debug: No worthy opponents found with threshold {competitiveness_threshold}")
+            else:
+                print("Debug: No matches found in the initial dataset")
 
         # Remove the normalized_opponent column if it exists before further processing
         if 'normalized_opponent' in filtered_matches_df.columns:
@@ -965,9 +977,10 @@ def init_callbacks(app, teams, team_groups_param, conn):
             all_opponents = [{'label': t, 'value': t} for t in teams if t != team]
         else:  # 'group'
             if not team_group or team_group not in team_groups:
-                return [], []  # No group selected or invalid group
-
+                return [], []  # No valid group selected
             group_teams = team_groups.get(team_group, [])
+            if not group_teams:
+                return [], []  # Empty group
             all_opponents = [{'label': t, 'value': t} for t in teams if t not in group_teams]
 
         # If filter type is 'worthy', compute worthy opponents
@@ -994,6 +1007,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
             # Execute query and get opponent data
             opponent_df = conn.execute(opponent_query).fetchdf()
+            print(f"Debug: Raw opponent data: {opponent_df.head()}")
+            print(f"Debug: Opponent columns: {opponent_df.columns}")
+
+            # Rename 'opponent' column to 'opponent_team' for consistency
+            if 'opponent' in opponent_df.columns and 'opponent_team' not in opponent_df.columns:
+                opponent_df = opponent_df.rename(columns={'opponent': 'opponent_team'})
 
             # Calculate competitiveness for each opponent
             worthy_opponents = []
@@ -1002,27 +1021,19 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
             # Special handling - Any team with "Key West" in the name should be considered worthy
             key_west_teams = []
+            for team_name in opponent_df['opponent_team'].unique():
+                if 'key west' in str(team_name).lower():
+                    key_west_teams.append(team_name)
 
-            # Group by opponent, but normalize names first to handle case variations
-            # Add a normalized column for grouping
             if not opponent_df.empty:
-                # Create a normalized team name column for grouping
-                opponent_df['normalized_opponent'] = opponent_df['opponent'].str.lower().str.replace('[^a-z0-9]', '', regex=True)
-
-                # Group by normalized opponent name
+                # Normalize team names for consistent matching
+                opponent_df = normalize_team_names_in_dataframe(opponent_df, 'opponent_team')
                 opponent_groups = opponent_df.groupby('normalized_opponent')
 
-                # Create a mapping of normalized names to original display names
+                # Create a mapping of normalized names to original names
                 name_mapping = {}
-                for _, row in opponent_df.iterrows():
-                    norm_name = row['normalized_opponent']
-                    original_name = row['opponent']
-                    if norm_name not in name_mapping:
-                        name_mapping[norm_name] = original_name
-
-                    # Add Key West teams to a special list
-                    if 'key west' in original_name.lower():
-                        key_west_teams.append(original_name)
+                for norm_name, group in opponent_groups:
+                    name_mapping[norm_name] = group['opponent_team'].iloc[0]
 
                 # First identify opponents who have defeated us (these are automatic worthy adversaries)
                 for norm_opponent, group in opponent_groups:
@@ -1031,15 +1042,12 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
                     # Count games where the opponent won (we lost)
                     opponent_wins = len(group[group['result'] == 'Loss'])
+                    total_matches = len(group)
+
                     if opponent_wins > 0:
                         opponents_with_wins.add(norm_opponent)
 
                         # Add this opponent to worthy opponents list
-                        total_matches = len(group)
-                        losses = opponent_wins
-                        loss_rate = losses / total_matches
-
-                        # Add to worthy opponents with note that they've defeated us
                         worthy_opponents.append({
                             'label': f"{display_name} ({total_matches} matches, defeated us {opponent_wins} times)",
                             'value': display_name
@@ -1070,9 +1078,9 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
                     if len(group) >= 1:  # Reduced minimum match threshold to 1
                         # Calculate results against this opponent
-                        wins = len(group[group['result'] == 'Win'])
+                        total_matches = len(group)
                         losses = len(group[group['result'] == 'Loss'])
-                        loss_rate = losses / len(group)
+                        loss_rate = losses / total_matches
 
                         # Calculate average goal differential (absolute value)
                         group['goal_diff'] = abs(group['team_score'] - group['opponent_score'])
@@ -1087,26 +1095,26 @@ def init_callbacks(app, teams, team_groups_param, conn):
 
                         # Threshold now works as: higher threshold = more challenging opponents
                         if competitiveness_score >= competitiveness_threshold:
-                            total_matches = len(group)
                             worthy_opponents.append({
                                 'label': f"{display_name} ({total_matches} matches, {competitiveness_score:.0f}% competitive)",
                                 'value': display_name
                             })
                             worthy_opponent_values.append(display_name)
+                            print(f"Debug: Added worthy opponent {display_name} with score {competitiveness_score:.0f}%")
 
-            # Sort by competitiveness (most competitive first)
-            worthy_opponents = sorted(worthy_opponents, key=lambda x: x['label'])
+                # Sort by competitiveness (most competitive first)
+                worthy_opponents = sorted(worthy_opponents, key=lambda x: x['label'])
 
-            if worthy_opponents:
-                # Return all worthy opponents' options and all values already selected
-                # Ensure worthy_opponent_values is a proper list for multi-select
-                if not isinstance(worthy_opponent_values, list):
-                    worthy_opponent_values = [worthy_opponent_values] if worthy_opponent_values else []
+                if worthy_opponents:
+                    # Return all worthy opponents' options and all values already selected
+                    # Ensure worthy_opponent_values is a proper list for multi-select
+                    if not isinstance(worthy_opponent_values, list):
+                        worthy_opponent_values = [worthy_opponent_values] if worthy_opponent_values else []
 
-                print(f"Debug: Found {len(worthy_opponents)} worthy opponents, returning {len(worthy_opponent_values)} values: {worthy_opponent_values}")
-                return worthy_opponents, worthy_opponent_values
-            else:
-                return [{'label': 'No worthy opponents found with current threshold', 'value': ''}], []
+                    print(f"Debug: Found {len(worthy_opponents)} worthy opponents, returning {len(worthy_opponent_values)} values: {worthy_opponent_values}")
+                    return worthy_opponents, worthy_opponent_values
+                else:
+                    return [{'label': 'No worthy opponents found with current threshold', 'value': ''}], []
 
         # For 'specific' option, return all opponents
         elif filter_type == 'specific':
