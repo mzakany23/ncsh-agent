@@ -87,12 +87,25 @@ def filter_matches_by_opponents(matches_df, opponents, normalized_column='normal
     # Normalize the opponent names for matching
     normalized_opponents = [normalize_team_name(op) for op in opponents]
 
-    # Create a mask of matches against the specified opponents
-    mask = matches_df[normalized_column].apply(
-        lambda x: any(norm_op in x or x in norm_op for norm_op in normalized_opponents)
-    )
+    print(f"Debug: Filtering matches against opponents: {opponents}")
+    print(f"Debug: Normalized opponent names for matching: {normalized_opponents}")
+    print(f"Debug: Unique normalized opponents in data: {matches_df[normalized_column].unique()}")
 
-    return matches_df[mask]
+    # Create a mask of matches against the specified opponents using exact matching
+    # This improves reliability compared to substring matching
+    mask = matches_df['opponent_team'].isin(opponents)
+
+    # If exact matching didn't find all matches, try normalized matching
+    if mask.sum() < len(normalized_opponents):
+        # Create a mask using normalized values for more flexible matching
+        norm_mask = matches_df[normalized_column].isin(normalized_opponents)
+        # Combine masks with logical OR
+        mask = mask | norm_mask
+
+    filtered_df = matches_df[mask]
+    print(f"Debug: Found {len(filtered_df)} matches after opponent filtering")
+
+    return filtered_df
 
 
 def calculate_competitiveness_score(match_group):

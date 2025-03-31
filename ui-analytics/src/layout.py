@@ -7,14 +7,14 @@ def get_loading_spinner():
     return dbc.Spinner(
         id="loading-spinner",
         fullscreen=True,
-        color="#6F42C1",
+        color="#20A7C9",
         type="grow",
         children=[
         html.Div([
             html.H3("Loading NC Soccer Analytics Dashboard...",
-                   style={"color": "#6F42C1", "text-align": "center", "margin-top": "20px"}),
+                   style={"color": "#20A7C9", "text-align": "center", "margin-top": "20px"}),
             html.P("Please wait while we prepare your data.",
-                  style={"color": "#5B6AFE", "text-align": "center"})
+                  style={"color": "#484848", "text-align": "center"})
         ])
     ]
 )
@@ -35,21 +35,38 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
             style={"display": "block"}  # Initially visible
         ),
 
-        # Top Header Row
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("Game Dashboard", className="text-center my-3")
-                ], className="p-3", style={'background-color': 'white', 'border-radius': '8px', 'box-shadow': '0 2px 4px rgba(0,0,0,0.05)'})
-            ], width=12)
-        ], className="mb-4"),
+        # Top Navigation Bar (Superset style)
+        html.Div([
+            dbc.Row([
+                # Left side - Title, Star, Published tag and version
+                dbc.Col([
+                    html.Div([
+                        html.H3("NC Soccer Analytics Dashboard", className="mb-0 d-inline-block"),
+                        html.I(className="fas fa-star text-warning ms-2", style={"font-size": "22px"}),
+                        html.Span("Published", className="ms-2 px-2 py-1",
+                                 style={"background-color": "#F5F5F5",
+                                       "color": "#484848",
+                                       "border-radius": "4px",
+                                       "font-size": "13px",
+                                       "font-weight": "500"}),
+                        html.Span("v1.2.0", className="ms-2",
+                                 style={"color": "#666666",
+                                       "font-size": "13px",
+                                       "font-weight": "500"}),
+                        html.Span("Last updated: Mar 30, 2025", className="ms-2",
+                                 style={"color": "#666666",
+                                       "font-size": "13px"})
+                    ], className="d-flex align-items-center")
+                ], width=12)
+            ], className="align-items-center"),
+        ], className="py-3 px-4 mb-4", style={'background-color': 'white', 'border-bottom': '1px solid #E0E0E0'}),
 
         # Main content in two columns
         dbc.Row([
             # Left sidebar with filters
             dbc.Col([
                 html.Div([
-                    html.H4("Filters", className="mb-4", style={'color': '#5B6AFE'}),
+                    html.H4("Filters", className="mb-4", style={'color': '#20A7C9'}),
 
                     html.Label("Team Selection Type:", className="fw-bold mb-2"),
                     dcc.RadioItems(
@@ -109,8 +126,14 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                 value=[],
                                 multi=True,
                                 searchable=True,
-                                className="mb-2",
-                                placeholder="Select one or more opponents"
+                                className="mb-2 multi-select-dropdown",
+                                placeholder="Select one or more opponents",
+                                style={
+                                    'min-height': '38px',
+                                    'height': 'auto',
+                                    'margin-bottom': '10px',
+                                    'width': '100%'
+                                }
                             ),
                             # New dropdown specifically for team groups
                             html.Div([
@@ -135,10 +158,10 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                         step=5,
                                         value=30,
                                         marks={
-                                            0: {'label': '0%', 'style': {'color': '#28A745'}},
-                                            30: {'label': '30%', 'style': {'color': '#5B6AFE'}},
-                                            70: {'label': '70%', 'style': {'color': '#DC3545'}},
-                                            100: {'label': '100%', 'style': {'color': '#DC3545'}}
+                                            0: {'label': '0%', 'style': {'color': '#44B78B'}},
+                                            30: {'label': '30%', 'style': {'color': '#20A7C9'}},
+                                            70: {'label': '70%', 'style': {'color': '#FF7F44'}},
+                                            100: {'label': '100%', 'style': {'color': '#E04355'}}
                                         },
                                         className="mb-1"
                                     ),
@@ -177,7 +200,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
 
                     # Team Groups Management Section
                     html.Div([
-                        html.H5("Team Groups Management", className="mb-3", style={'color': '#5B6AFE'}),
+                        html.H5("Team Groups Management", className="mb-3", style={'color': '#20A7C9'}),
 
                         html.Label("Create New Team Group:", className="fw-bold mb-2"),
                         dbc.Input(
@@ -262,27 +285,12 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
 
             # Right main content area
             dbc.Col([
-                # Introduction and context
-                dbc.Card([
-                    dbc.CardHeader(html.H4("About This Dashboard", className="m-0")),
-                    dbc.CardBody([
-                        html.P([
-                            "This dashboard provides an analysis of soccer match data for the selected team and time period. ",
-                            "Use the filters to select a specific team and date range to explore their performance."
-                        ]),
-                        html.P([
-                            "The Key West (Combined) option shows aggregate statistics for all Key West teams, while individual team ",
-                            "selections allow you to focus on specific squads."
-                        ])
-                    ])
-                ], className="mb-4"),
-
                 # Summary statistics cards in a single row at the top of the story
                 html.H4("Performance Summary", className="section-header"),
                 dcc.Loading(
                     id="loading-performance-metrics",
                     type="circle",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Row([
                             dbc.Col([
@@ -353,7 +361,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-performance-chart",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -369,7 +377,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-goal-charts",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -394,7 +402,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                         dcc.Loading(
                             id="loading-opponent-analysis",
                             type="default",
-                            color="#6F42C1",
+                            color="#20A7C9",
                             children=[
                                 dbc.Card([
                                     dbc.CardHeader("Opponent Performance Comparison"),
@@ -435,7 +443,7 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                 dcc.Loading(
                     id="loading-match-results",
                     type="default",
-                    color="#6F42C1",
+                    color="#20A7C9",
                     children=[
                         dbc.Card([
                             dbc.CardBody([
@@ -457,15 +465,16 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                     style_cell={
                                         'textAlign': 'left',
                                         'padding': '10px',
-                                        'fontFamily': 'Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif',
-                                        'color': '#343A40'
+                                        'fontFamily': 'Inter, Helvetica Neue, Helvetica, Arial, sans-serif',
+                                        'color': '#323232'
                                     },
                                     style_header={
-                                        'backgroundColor': '#5B6AFE',
-                                        'color': 'white',
+                                        'backgroundColor': '#F5F5F5',
+                                        'color': '#484848',
                                         'fontWeight': 'bold',
                                         'textAlign': 'left',
-                                        'border': 'none'
+                                        'border': 'none',
+                                        'borderBottom': '1px solid #E0E0E0'
                                     },
                                     style_data={
                                         'border': 'none',
@@ -474,32 +483,32 @@ def init_layout(app, teams, team_groups=None, conn=None, min_date=None, max_date
                                     style_data_conditional=[
                                         {
                                             'if': {'filter_query': '{result} contains "Win"'},
-                                            'backgroundColor': 'rgba(40, 167, 69, 0.1)',
-                                            'borderLeft': '3px solid #28A745'
+                                            'backgroundColor': 'rgba(68, 183, 139, 0.1)',
+                                            'borderLeft': '3px solid #44B78B'
                                         },
                                         {
                                             'if': {'filter_query': '{result} contains "Draw"'},
-                                            'backgroundColor': 'rgba(91, 106, 254, 0.1)',
-                                            'borderLeft': '3px solid #5B6AFE'
+                                            'backgroundColor': 'rgba(252, 199, 0, 0.1)',
+                                            'borderLeft': '3px solid #FCC700'
                                         },
                                         {
                                             'if': {'filter_query': '{result} contains "Loss"'},
-                                            'backgroundColor': 'rgba(220, 53, 69, 0.1)',
-                                            'borderLeft': '3px solid #DC3545'
+                                            'backgroundColor': 'rgba(224, 67, 85, 0.1)',
+                                            'borderLeft': '3px solid #E04355'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Win"'},
-                                            'color': '#28A745',
+                                            'color': '#44B78B',
                                             'fontWeight': 'bold'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Draw"'},
-                                            'color': '#5B6AFE',
+                                            'color': '#FCC700',
                                             'fontWeight': 'bold'
                                         },
                                         {
                                             'if': {'column_id': 'result', 'filter_query': '{result} contains "Loss"'},
-                                            'color': '#DC3545',
+                                            'color': '#E04355',
                                             'fontWeight': 'bold'
                                         }
                                     ]
